@@ -26,7 +26,8 @@
 | CPU、内存 | 8逻辑CPU、15G内存 |
 | Docker Engine / Compose版本 | 26.1.4 / v2.27.1 |
 | 现有数据服务部署目录 | `/mnt/docker/data-reservoir`，仅作边界参考；工作台必须使用另一个目录 |
-| 工作台部署绝对目录 | `/mnt/docker/automation-workbench` |
+| 工作台配置目录 | `/mnt/docker/automation-workbench`；只放Compose、env、秘密和小型配置 |
+| 发布包/备份目录 | `/data/automation-workbench/releases`、`/data/automation-workbench-backups` |
 | 镜像交付 | 离线固定版本镜像包及SHA-256 |
 | 共享入口 | Docker内共享Nginx；入口网络 `basic_basic_net` |
 | 最终URL | `https://ai.muyaju.net/automation/` |
@@ -34,14 +35,16 @@
 | PostgreSQL实例 | 17.11；容器 `muyaju-data-reservoir-db-1`，容器端口5432，无宿主机映射 |
 | PostgreSQL持久卷 | `muyaju-data-reservoir-pg17`；工作台不得直接操作或整卷恢复 |
 | 工作台数据库/用户 | 拟定`automation_workbench` / `automation_workbench_user`；尚未创建 |
-| 数据库Docker网络名/主机名 | 网络`muyaju-data-reservoir_database`已确认；候选主机名`muyaju-data-reservoir-db-1`待容器内验证 |
+| 数据库Docker网络名/主机名 | 网络`muyaju-data-reservoir_database`；别名`db`和`muyaju-data-reservoir-db-1`已现场确认，工作台使用稳定服务别名`db` |
 | PostgreSQL和平台文件备份目标 | 数据库建议`/data/automation-workbench-backups`；平台文件目标待定 |
 | 日备份保留天数、异地副本 | 待填写 |
-| `/data`容量现场值 | 总197GB、已用173GB、可用15GB、使用率93%；当前为上线阻断项 |
+| Docker Root Dir所在盘 | 已确认位于`/data`文件系统；镜像层和默认命名卷占用`/data` |
+| `/data`容量现场值 | 总197GB、已用169GB、可用18GB、使用率91%；正在清理，目标约100GB可用，清理后须复测 |
+| `/`容量现场值 | 总40GB、已用37GB、可用844MB、使用率98%；当前为高优先级上线阻断项 |
 | 预计用户/电脑/任务/日运行量 | 待填写 |
 | 单文件、单批次、项目容量配额 | 待填写并与磁盘预算核对 |
 
-最低资源建议不能替代容量测算。当前生产模板原默认单项目输入与程序包配额合计可达15GB，已经等于`/data`全部可用空间，且尚未计数据库、结果、日志、备份和升级临时空间，因此模板已改为强制填写容量值，未批准前应用不能正常启动。还须核对Docker Root Dir和`platform_data`卷实际落盘文件系统。CentOS 7已停止常规维护，容器隔离不能替代宿主内核安全；上线前需要服务器升级计划或明确风险接受。
+最低资源建议不能替代容量测算。Docker Root Dir和默认`platform_data`卷已经确认落在`/data`；清理达到约100GB可用后，仍需按输入、结果、程序包、数据库增长、日志、备份和升级临时空间确定配额。`/mnt/docker`位于仅剩844MB的根分区，不得存放离线tar、备份或平台数据。CentOS 7已停止常规维护，容器隔离不能替代宿主内核安全；上线前需要服务器升级计划或明确风险接受。
 
 ## 3. 网络矩阵
 
@@ -53,7 +56,7 @@
 | 工作台服务器 | `oapi.dingtalk.com` | TCP 443 | 钉钉消息 | 待验证 |
 | 执行电脑 | UNC文件服务器 | TCP 445或实际端口 | 共享目录输入，可选 | 待验证 |
 | 服务器本地运维 | `127.0.0.1:18080` | TCP 18080 | 仅本机诊断入口 | 现场未占用，待部署验证 |
-| 工作台容器 | `muyaju-data-reservoir-db-1`候选别名 | TCP 5432（Docker内网） | 仅访问工作台独立数据库 | 网络已确认，解析/权限待验证 |
+| 工作台容器 | `db` | TCP 5432（`muyaju-data-reservoir_database`） | 仅访问工作台独立数据库 | 网络/别名已确认，容器内解析和账号权限待验证 |
 | 共享Nginx容器 | `automation-workbench-api:8000` | TCP 8000（`basic_basic_net`） | `/automation/`转发 | 网络已确认，配置待审批 |
 
 PostgreSQL继续不映射宿主端口，不对公网或办公网开放。工作台的 `init-db/api/worker` 只加入管理员指定的数据库网络，使用稳定主机名连接；执行电脑由Agent主动连接工作台，不开放执行电脑入站管理端口。
@@ -70,7 +73,8 @@ PostgreSQL继续不映射宿主端口，不对公网或办公网开放。工作�
 - [ ] 工作台账号连接上限已设置并覆盖API/Worker连接池及初始化余量；默认两个进程合计最多20条应用连接；
 - [ ] 数据库密码、Fernet密钥、监控Token和管理员初始密码有独立受控备份；
 - [ ] 域名、TLS和反向代理配置经过配置审查；
-- [ ] 已处理`/data`使用率93%的容量阻断，并核对Docker Root Dir、平台卷落盘位置、增长配额、日志、备份和迁移临时空间；
+- [ ] 清理后重新核对`/data`达到批准的可用容量，并确定平台数据、增长配额、日志、备份和迁移临时空间；
+- [ ] 将根分区`/`从98%使用率降至运维批准水位；离线包、备份和临时文件不得放在`/mnt/docker`；
 - [ ] CentOS 7宿主风险已有升级计划或经授权的限期风险接受记录；
 - [ ] 管理员已给出工作台数据库的项目级备份/恢复命令、位置、保留周期、恢复负责人和恢复演练日期；
 - [ ] 首台试点执行电脑使用专用低权限Windows账号，Python/Node及目录权限已准备；
@@ -92,7 +96,7 @@ PostgreSQL继续不映射宿主端口，不对公网或办公网开放。工作�
    python deploy/bootstrap.py \
      --directory /mnt/docker/automation-workbench/secrets \
      --external-database \
-     --database-host muyaju-data-reservoir-db-1 \
+     --database-host db \
      --database-port 5432 \
      --database-name automation_workbench \
      --database-user automation_workbench_user \
@@ -109,7 +113,7 @@ PostgreSQL继续不映射宿主端口，不对公网或办公网开放。工作�
 
    配置输出中的活动服务不得包含 `db`；`init-db/api/worker` 必须加入管理员提供的数据库网络。
 
-6. 按服务器现有发布方式上传并核对离线镜像包，或拉取固定RepoDigest；两种方式都必须检查镜像标签和摘要：
+6. 把离线包上传到`/data/automation-workbench/releases`并核对SHA-256，不得把约72MB的tar及其临时副本放入根分区上的`/mnt/docker`。若改用仓库则拉取固定RepoDigest；两种方式都必须检查镜像标签和摘要：
 
    ```bash
    docker pull <完整RepoDigest>
