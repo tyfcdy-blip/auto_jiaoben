@@ -18,7 +18,8 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def load_module(name: str):
-    spec = importlib.util.spec_from_file_location(name, ROOT / "deploy" / f"{name}.py")
+    spec = importlib.util.spec_from_file_location(name.replace("/", "_"),
+                                                  ROOT / "deploy" / f"{name}.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -26,6 +27,8 @@ def load_module(name: str):
 
 bootstrap = load_module("bootstrap")
 operations = load_module("operations")
+delivery_builder = load_module("build_server_delivery")
+nginx_patcher = load_module("server/patch_nginx")
 
 
 def compose_command():
@@ -169,6 +172,101 @@ def test_retention_and_capacity_are_wired_to_compose_and_production_template(ren
     assert production["WB_STORAGE_MIN_FREE_BYTES"] == "32212254720"
     assert production["WB_MAX_PROJECT_INPUT_BYTES"] == "1073741824"
     assert production["WB_MAX_PROJECT_PROGRAM_BYTES"] == "536870912"
+
+
+def test_finalshell_delivery_builder_is_reproducible_and_contains_no_secrets(tmp_path):
+    image = tmp_path / "image.tar"
+    image.write_bytes(b"synthetic immutable image archive")
+    manifest = tmp_path / "release.json"
+    manifest.write_text(json.dumps({
+        "release": "v0.6.0-rc.4",
+        "git_commit": "825e310fd567023542140471e31a147bd0f45b1d",
+        "image": "automation-workbench:0.6.0-rc.4",
+        "image_id": "sha256:" + "1" * 64,
+        "platform": "linux/amd64",
+        "archive_sha256": delivery_builder.digest(image),
+    }), encoding="utf-8")
+    output = tmp_path / "delivery.tar.gz"
+    result = delivery_builder.build(image, manifest, output)
+    assert result["sha256"] == delivery_builder.digest(output)
+    assert Path(str(output) + ".sha256").read_text().startswith(result["sha256"])
+    with tarfile.open(output, "r:gz") as archive:
+        names = archive.getnames()
+        assert all(not name.startswith("/") and ".." not in Path(name).parts for name in names)
+        assert any(name.endswith("/scripts/install.sh") for name in names)
+        assert any(name.endswith("/payload/.env.production") for name in names)
+        assert not any("secret" in Path(name).name.lower() for name in names)
+        environment_name = next(name for name in names if name.endswith("/payload/.env.production"))
+        environment = archive.extractfile(environment_name).read().decode()
+        assert "825e310fd567023542140471e31a147bd0f45b1d" in environment
+        assert "REPLACE_WITH" not in environment
+    with pytest.raises(ValueError, match="拒绝覆盖"):
+        delivery_builder.build(image, manifest, output)
+
+
+def test_nginx_patcher_targets_only_https_server_and_is_idempotent(tmp_path):
+    target = tmp_path / "site.conf"
+    target.write_text("""
+server { listen 80; server_name ai.muyaju.net; return 308 https://$host$request_uri; }
+server {
+    listen 443 ssl;
+    server_name ai.muyaju.net;
+    location /data-service/ { proxy_pass http://data-api; }
+}
+""", encoding="utf-8")
+    snippet = ROOT / "deploy" / "server" / "nginx-location.conf"
+    backup = tmp_path / "site.conf.bak"
+    assert nginx_patcher.patch(target, snippet, backup) == "patched"
+    content = target.read_text(encoding="utf-8")
+    assert content.count("automation-workbench-managed:start") == 1
+    assert content.index("automation-workbench-managed:start") > content.index("listen 443 ssl")
+    assert backup.read_text(encoding="utf-8").count("automation-workbench-managed:start") == 0
+    assert nginx_patcher.patch(target, snippet, backup) == "unchanged"
+
+
+def test_server_shell_scripts_have_valid_bash_syntax():
+    bash = shutil.which("bash")
+    if not bash:
+        pytest.skip("当前环境没有bash，服务器脚本语法待Linux CI验证")
+    probe = subprocess.run([bash, "--version"], capture_output=True, timeout=10)
+    if probe.returncode != 0:
+        pytest.skip("当前bash入口不可执行，服务器脚本语法待Linux CI验证")
+    scripts = sorted((ROOT / "deploy" / "server").glob("*.sh"))
+    assert scripts
+    for script in scripts:
+        subprocess.run([bash, "-n", str(script)], check=True, timeout=10)
+
+
+def test_dispatch_enable_has_fail_closed_recovery():
+    script = (ROOT / "deploy" / "server" / "enable-dispatch.sh").read_text(encoding="utf-8")
+    trap_index = script.index("trap rollback_dispatch ERR")
+    enable_index = script.index("WB_DISPATCH_ENABLED true")
+    assert trap_index < enable_index
+    assert "WB_DISPATCH_ENABLED false" in script
+    assert "grep -Fxq 'WB_DISPATCH_ENABLED=false'" in script
+    assert "compose stop worker" in script
+    assert "--force-recreate api worker" in script
+
+
+def test_nginx_rollback_refuses_changed_shared_config_and_restores_on_invalid_backup():
+    install = (ROOT / "deploy" / "server" / "install.sh").read_text(encoding="utf-8")
+    rollback = (ROOT / "deploy" / "server" / "rollback-first-install.sh").read_text(
+        encoding="utf-8"
+    )
+    assert "nginx_installed_sha256" in install and "nginx_config_path" in install
+    assert "共享Nginx配置在首次安装后已变化，拒绝重写回退基线" in install
+    assert 'if [[ "${nginx_state_files}" -eq 0 ]]; then' in install
+    digest_check = rollback.index('"${current_digest}" == "${expected_digest}"')
+    restore_backup = rollback.index('cp -p "${nginx_backup}" "${nginx_config}"')
+    assert digest_check < restore_backup
+    assert 'cp -p "${rollback_snapshot}" "${nginx_config}"' in rollback
+    assert "Nginx配置在部署后已发生变化，拒绝自动覆盖" in rollback
+
+
+def test_server_readme_requires_outer_hash_and_declares_side_effect_limit():
+    readme = (ROOT / "deploy" / "server" / "README-FIRST.txt").read_text(encoding="utf-8")
+    assert "sha256sum -c automation-workbench-server-v0.6.0-rc.4.tar.gz.sha256" in readme
+    assert "side_effects=false" in readme
 
 
 def test_external_database_secret_url_encodes_password(tmp_path):
