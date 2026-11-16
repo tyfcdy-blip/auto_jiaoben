@@ -21,9 +21,9 @@
 | RB03 后端回归 | W1/W2 | 单元/API/集成 | 合成数据、当前本机环境 | 全量 pytest 无失败；环境专项跳过单列 | 通过：338通过、36项按明确外部环境条件跳过、2条第三方弃用警告，退出0 |
 | RB04 前端回归 | W1/W3 | 组件/构建 | Vitest、TypeScript、Vite、Prettier | 测试、构建、格式全部通过 | 通过：17文件154测试、100模块生产构建、Prettier均退出0；npm生产及完整审计0漏洞 |
 | RB05 Compose与生产模板 | W2/W3 | 配置 | 开发和生产示例配置 | Compose解析通过；生产初始派发关闭；无明文秘密 | 通过：开发/生产示例均解析成功，生产模板默认关闭派发且只含占位值 |
-| RB06 精确源码镜像 | W2 | 构建 | 首次基线commit | 镜像标签中的 version/revision 与 Git tag/commit一致 | 待执行 |
-| RB07 隔离容器冒烟 | W2/W3 | 集成 | 独立Compose项目、临时端口和卷 | PostgreSQL、初始化、API、Worker健康；不影响既有实例 | 待执行 |
-| RB08 离线回退包 | W2 | 发布 | 已验证镜像 | 导出tar，生成SHA256和清单；重新加载后镜像ID一致 | 待执行 |
+| RB06 精确源码镜像 | W2 | 构建 | 首次基线commit | 镜像标签中的 version/revision 与 Git tag/commit一致 | 通过：tag `v0.6.0-rc.1` 指向 `8deb170…`，镜像ID `sha256:d32e7d…`，OCI version/revision一致 |
+| RB07 隔离容器冒烟 | W2/W3 | 集成 | 独立Compose项目、临时端口和卷 | PostgreSQL、初始化、API、Worker健康；不影响既有实例 | 通过：生产模式、派发环境开关关闭；ready/page/docs均200，API/DB健康、Worker运行，日志无错误；核对项目名后清理测试容器和卷 |
+| RB08 离线回退包 | W2 | 发布 | 已验证镜像 | 导出tar，生成SHA256和清单；重新加载后镜像ID一致 | 通过：72,007,168字节，SHA256 `ccc32860…6190`；重新加载后镜像ID一致，完整清单位于忽略目录 `runtime/releases/v0.6.0-rc.1/` |
 | RB09 部署单审查 | W3 | 文档/安全 | 未知服务器事实保持占位 | 明确停止条件、备份、HTTPS、网络、秘密、验收和回退步骤 | 通过：5份关联文档链接校验通过；服务器事实、RepoDigest和人工签署仍保持未验证 |
 
 ## 退出条件
