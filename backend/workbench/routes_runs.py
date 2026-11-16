@@ -8,6 +8,7 @@ from .models import Run, Task, Version, Artifact, LogEntry, Project, TriggerEven
 from .security import Problem, audit, authorize, get_db, human, identity, require
 from .storage import object_path
 from .views import project_filter, public, run_view
+from .retention import file_views, require_available
 import time
 
 router = APIRouter()
@@ -158,7 +159,8 @@ def run_detail(run_id: str, request: Request, who=Depends(identity), db=Depends(
     run = require(db, Run, run_id)
     authorize_run(db, who, run)
     result = _run_response(db, request.app.state.settings, run)
-    result["artifacts"] = [public(item) for item in db.scalars(select(Artifact).where(Artifact.run_id == run.id))]
+    result["artifacts"] = file_views(
+        db, "artifact", db.scalars(select(Artifact).where(Artifact.run_id == run.id)), public)
     if who.kind == "caller":
         result.pop("late_evidence", None)
         result.pop("parameters", None)
@@ -213,6 +215,7 @@ def artifact_download(run_id: str, artifact_id: str, request: Request, who=Depen
     item = require(db, Artifact, artifact_id)
     if item.run_id != run.id:
         raise Problem(404, "not_found", "文件不存在")
+    require_available(db, "artifact", item.id)
     audit(db, who, "download_artifact", item.id, run.project_id)
     return FileResponse(object_path(request.app.state.settings, item.sha256), filename=item.name,
                         media_type="application/octet-stream")

@@ -8,13 +8,15 @@ from sqlalchemy import select, func
 from . import schemas as S
 from .security import write_lock
 from .execution import ACTIVE
-from .models import (Alert, Audit, Channel, ChannelAlertPolicy, Delivery, Gate, LoopStatus, Member, Node,
-                     NodeProjectGrant, ResultNotification, Run, Schedule, Task, Version)
+from .models import (Alert, Audit, Channel, ChannelAlertPolicy, Delivery, FileRetention, Gate,
+                     LoopStatus, Member, Node, NodeProjectGrant, ResultNotification, Run, Schedule,
+                     Task, Version)
 from .notification_policy import ALERT_KINDS, DEFAULT_KINDS, alert_severity
 from .notifications import send_test_message
 from .security import Problem, audit, authorize, get_db, human, require
 from .scheduling import next_fire, resolve_dates
 from .storage import validate_parameters
+from .retention import storage_health
 from .input_sources import roots_are_subset, uses_directory, validate_directory_run
 from .node_config import grant_for
 from .views import listing, project_filter, public, run_view
@@ -50,10 +52,26 @@ def components(request: Request, db=Depends(get_db, scope="function")):
     if not secret or not hmac.compare_digest(supplied, secret):
         raise Problem(401, "unauthorized", "需要监控凭据")
     values = {row.name: row.last_success for row in db.scalars(select(LoopStatus))}
-    healthy = all(time.time()-values.get(key, 0) < 60 for key in ("scheduler", "reconciler", "notifier"))
+    now = time.time()
+    healthy = (all(now-values.get(key, 0) < 60 for key in ("scheduler", "reconciler", "notifier"))
+               and now-values.get("storage_cleanup", 0)
+               < request.app.state.settings.cleanup_interval_seconds + 60)
     if not healthy:
         raise Problem(503, "component_stale", "后台循环未就绪或停止推进")
-    return {"status": "healthy", "loops": values}
+    storage = storage_health(request.app.state.settings)
+    cleanup_counts = dict(db.execute(select(
+        FileRetention.deletion_state, func.count(),
+    ).group_by(FileRetention.deletion_state)).all())
+    cleanup_counts["persistent_failures"] = db.scalar(select(func.count()).select_from(
+        FileRetention).where(FileRetention.deletion_state == "failed", FileRetention.attempts >= 3)) or 0
+    storage["cleanup"] = cleanup_counts
+    if not storage["healthy"]:
+        raise Problem(503, "storage_pressure", "平台文件容量已达到保护阈值")
+    if storage["warning"]:
+        raise Problem(503, "storage_warning", "平台文件容量已达到预警阈值")
+    if cleanup_counts["persistent_failures"]:
+        raise Problem(503, "storage_cleanup_failed", "平台文件持续清理失败，请检查存储权限")
+    return {"status": "healthy", "loops": values, "storage": storage}
 
 
 @router.get("/overview")

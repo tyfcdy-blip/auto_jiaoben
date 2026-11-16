@@ -9,7 +9,7 @@
 监控目标应填写工作台实际可访问的服务根地址，包括实际子路径，例如 `https://workbench.example.invalid/automation`，不要追加 `/api/v1`。程序依次检查：
 
 - `/api/v1/health/ready`：返回 HTTP 200 且 `status=ready`。
-- `/api/v1/health/components`：携带 Bearer 监控凭据，返回 HTTP 200 且 `status=healthy`。当前平台端检查 scheduler、reconciler、notifier 最近 60 秒的成功水位。
+- `/api/v1/health/components`：携带 Bearer 监控凭据，返回 HTTP 200 且 `status=healthy`。平台端检查 scheduler、reconciler、notifier 最近60秒的成功水位，以及storage_cleanup在配置的清理周期内推进；达到平台文件预警、硬上限或磁盘最低可用空间时返回503，由独立监控机器人发送故障通知。
 
 超时、网络失联、HTTP 非 200（包括 401、503 和跳转）、无法解析或状态不正确均判为故障。检查始终包含两个端点；远程地址必须 HTTPS，启用证书校验，不跟随跳转，也不读取系统代理环境变量。仅 `localhost` 和回环 IP 可用 HTTP，供本机验证。若企业使用私有 CA，应在监控主机正确部署受信任证书，不关闭校验。
 

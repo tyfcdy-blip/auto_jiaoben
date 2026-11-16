@@ -5,6 +5,7 @@ import os
 from pathlib import PurePosixPath
 import re
 import stat
+import shutil
 import uuid
 import zipfile
 from jsonschema import Draft202012Validator, ValidationError, SchemaError
@@ -108,11 +109,42 @@ async def read_upload(request, maximum):
     return bytes(payload)
 
 
+def storage_usage(settings):
+    directory = settings.data_dir / "objects"
+    used = 0
+    if directory.is_dir():
+        for item in directory.iterdir():
+            try:
+                if item.is_file() and not item.is_symlink() and re.fullmatch(r"[a-f0-9]{64}", item.name):
+                    used += item.stat().st_size
+            except FileNotFoundError:
+                # 监控扫描可能与已受数据库锁保护的清理提交交错；消失的对象不计占用。
+                continue
+    disk = shutil.disk_usage(settings.data_dir)
+    return {"used_bytes": used, "free_bytes": disk.free,
+            "warning_bytes": settings.storage_warning_bytes,
+            "max_bytes": settings.storage_max_bytes,
+            "min_free_bytes": settings.storage_min_free_bytes,
+            "warning": used >= settings.storage_warning_bytes}
+
+
 def store_bytes(settings, payload):
     sha = hashlib.sha256(payload).hexdigest()
     directory = settings.data_dir / "objects"
     directory.mkdir(parents=True, exist_ok=True)
     target = directory / sha
+    if target.exists():
+        stored_sha = None
+        if target.is_file() and not target.is_symlink() and target.stat().st_size == len(payload):
+            with target.open("rb") as stream:
+                stored_sha = hashlib.file_digest(stream, "sha256").hexdigest()
+        if stored_sha != sha:
+            raise Problem(507, "storage_corrupt", "平台文件存储异常，请联系管理员")
+        return sha
+    status = storage_usage(settings)
+    if (status["used_bytes"] + len(payload) > settings.storage_max_bytes
+            or status["free_bytes"] - len(payload) < settings.storage_min_free_bytes):
+        raise Problem(507, "storage_capacity", "平台文件容量不足，请联系管理员清理或扩容")
     if not target.exists():
         temporary = directory / (".upload-" + uuid.uuid4().hex)
         try:

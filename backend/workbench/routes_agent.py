@@ -12,6 +12,7 @@ from .execution import (TERMINAL, claim, complete, node_run_grant_authorized,
 from .models import Artifact, BatchFile, LogEntry, Run, Task, Version
 from .security import Identity, Problem, get_db, node_identity
 from .storage import object_path, read_upload, safe_name, store_bytes
+from .retention import active_file_condition, require_available
 from .views import public
 from .input_sources import uses_directory
 from .input_sources import validate_root_list
@@ -87,7 +88,9 @@ def receive(request: Request, who=Depends(node_identity), db=Depends(get_db, sco
     run, grant, config = claimed
     task, version = db.get(Task, run.task_id), db.get(Version, run.version_id)
     prefix = settings.base_path + "/api/v1/agent/runs/"+run.id
-    files = db.scalars(select(BatchFile).where(BatchFile.batch_id == run.input_batch_id)).all() if run.input_batch_id else []
+    files = db.scalars(select(BatchFile).where(
+        BatchFile.batch_id == run.input_batch_id,
+        active_file_condition("input", BatchFile))).all() if run.input_batch_id else []
     response = {"run_id": run.id, "attempt_id": run.attempt_id, "protocol_version": "1", "command": version.command,
             "bundle_sha256": version.bundle_sha256, "bundle_url": prefix+"/bundle?attempt_id="+run.attempt_id,
             "parameters": run.parameters, "operation": task.operation, "timeout_seconds": task.timeout_seconds,
@@ -121,6 +124,7 @@ def download_input(run_id: str, file_id: str, attempt_id: str, request: Request,
     item = db.get(BatchFile, file_id)
     if not item or item.batch_id != run.input_batch_id:
         raise Problem(404, "not_found", "输入文件不存在")
+    require_available(db, "input", item.id)
     return FileResponse(object_path(request.app.state.settings, item.sha256), media_type="application/octet-stream")
 
 

@@ -151,6 +151,26 @@ def test_business_secrets_are_not_environment_values(rendered_compose):
         assert all("docker.sock" not in str(volume) for volume in service.get("volumes", []))
 
 
+def test_retention_and_capacity_are_wired_to_compose_and_production_template(rendered_compose):
+    for name in ("api", "worker", "init-db"):
+        env = rendered_compose["services"][name]["environment"]
+        assert env["WB_INPUT_RETENTION_DAYS"] == "45"
+        assert env["WB_ARTIFACT_RETENTION_DAYS"] == "45"
+        assert env["WB_STORAGE_WARNING_BYTES"] == "48318382080"
+        assert env["WB_STORAGE_MAX_BYTES"] == "64424509440"
+    production = {}
+    for raw_line in (ROOT / "deploy" / ".env.production.example").read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if line and not line.startswith("#") and "=" in line:
+            key, value = line.split("=", 1)
+            production[key] = value
+    assert production["WB_INPUT_RETENTION_DAYS"] == "45"
+    assert production["WB_ARTIFACT_RETENTION_DAYS"] == "45"
+    assert production["WB_STORAGE_MIN_FREE_BYTES"] == "32212254720"
+    assert production["WB_MAX_PROJECT_INPUT_BYTES"] == "1073741824"
+    assert production["WB_MAX_PROJECT_PROGRAM_BYTES"] == "536870912"
+
+
 def test_external_database_secret_url_encodes_password(tmp_path):
     directory = tmp_path / "external-private"
     password = "synthetic:/?#[]@!$&'()*+,;=% password"

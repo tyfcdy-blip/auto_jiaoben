@@ -6,6 +6,7 @@ from sqlalchemy import select
 from .execution import ACTIVE, admit, alert, fail_without_start, recover_alert
 from .models import Alert, Batch, Gate, LoopStatus, Node, NodeProjectGrant, Run, Schedule, Task
 from .security import Problem
+from .retention import batch_has_expired_files
 
 
 def next_fire(expression, timezone_name, after):
@@ -102,7 +103,9 @@ def scan_health(db, settings, now=None):
         if run.state == "waiting_input":
             batch = db.get(Batch, run.input_batch_id) if run.input_batch_id else db.scalar(
                 select(Batch).where(Batch.project_id == run.project_id, Batch.label == run.expected_input_label))
-            if batch and batch.ready:
+            if batch and batch.ready and batch_has_expired_files(db, batch.id):
+                fail_without_start(db, run, "输入批次已超过保留期限，请上传新批次")
+            elif batch and batch.ready:
                 run.input_batch_id = batch.id
                 run.state = "queued"
             elif now-run.created_at > settings.input_timeout:

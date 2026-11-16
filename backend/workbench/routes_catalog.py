@@ -21,6 +21,8 @@ from .input_sources import (DIRECTORY_CAPABILITY, input_mode, roots_are_subset,
 from .node_config import config_state, grant_for, publish_configuration
 from .execution import ACTIVE, node_dispatch_status
 from .agent_package import windows_agent_package
+from .retention import (active_file_condition, batch_has_expired_files, batch_retention_state,
+                        batch_retention_states, file_views)
 
 router = APIRouter()
 
@@ -46,6 +48,14 @@ def authorize_input(db, who, project_id, level="operator"):
 def scoped_list(model, db, who, project_id, limit, offset, transform=None):
     query = project_filter(db, who, select(model).order_by(model.created_at.desc()), model, project_id)
     return listing(db, query, limit, offset, transform)
+
+
+def batch_listing(db, query, limit, offset):
+    total = db.scalar(select(func.count()).select_from(query.order_by(None).subquery()))
+    records = db.scalars(query.limit(limit).offset(offset)).all()
+    states = batch_retention_states(db, [record.id for record in records])
+    return {"items": [{**public(record), "retention_state": states[record.id]} for record in records],
+            "total": total}
 
 
 @router.get("/programs")
@@ -689,10 +699,13 @@ def batches(project_id: str | None = None, limit: int = Query(50, ge=1, le=200),
             offset: int = Query(0, ge=0), who=Depends(identity), db=Depends(get_db, scope="function")):
     if who.kind == "caller":
         authorize_input(db, who, project_id or who.record.project_id)
-        return listing(db, select(Batch).where(Batch.project_id == who.record.project_id).order_by(Batch.created_at.desc()), limit, offset)
+        return batch_listing(
+            db, select(Batch).where(Batch.project_id == who.record.project_id).order_by(Batch.created_at.desc()),
+            limit, offset)
     if who.kind != "user":
         raise Problem(403, "input_forbidden", "当前身份不能访问批次")
-    return scoped_list(Batch, db, who, project_id, limit, offset)
+    query = project_filter(db, who, select(Batch).order_by(Batch.created_at.desc()), Batch, project_id)
+    return batch_listing(db, query, limit, offset)
 
 
 @router.post("/batches", status_code=201)
@@ -717,7 +730,8 @@ def batch_detail(batch_id: str, who=Depends(identity), db=Depends(get_db, scope=
     batch = require(db, Batch, batch_id)
     authorize_input(db, who, batch.project_id, "viewer")
     files = db.scalars(select(BatchFile).where(BatchFile.batch_id == batch_id).order_by(BatchFile.name)).all()
-    return {**public(batch), "files": [public(item) for item in files]}
+    return {**public(batch), "retention_state": batch_retention_state(db, batch.id),
+            "files": file_views(db, "input", files, public)}
 
 
 @router.delete("/batches/{batch_id}", status_code=204)
@@ -747,6 +761,8 @@ def _store_input(batch_id: str, filename: str, payload: bytes, settings: Setting
     write_lock(db, who)
     batch = require(db, Batch, batch_id)
     authorize_input(db, who, batch.project_id)
+    if batch_has_expired_files(db, batch.id):
+        raise Problem(410, "file_expired", "该批次已有文件超过保留期限，请创建新批次")
     existing = db.scalar(select(BatchFile).where(BatchFile.batch_id == batch_id, BatchFile.name == filename))
     if existing:
         # 上传响应丢失时，重发同一内容不新增记录，也不改变已冻结清单。
@@ -762,7 +778,7 @@ def _store_input(batch_id: str, filename: str, payload: bytes, settings: Setting
         raise Problem(413, "batch_input_limit", "文件批次的文件数量或总容量已达上限")
     project_bytes = db.scalar(select(func.coalesce(func.sum(BatchFile.size), 0)).select_from(
         BatchFile).join(Batch, Batch.id == BatchFile.batch_id).where(
-            Batch.project_id == batch.project_id)) or 0
+            Batch.project_id == batch.project_id, active_file_condition("input", BatchFile))) or 0
     if project_bytes + len(payload) > settings.max_project_input_bytes:
         raise Problem(413, "project_input_quota", "项目输入文件容量已达上限，请联系管理员归档历史输入")
     sha = store_bytes(settings, payload)
@@ -778,6 +794,8 @@ def ready(batch_id: str, who=Depends(identity), db=Depends(get_db, scope="functi
     write_lock(db, who)
     batch = require(db, Batch, batch_id)
     authorize_input(db, who, batch.project_id)
+    if batch_has_expired_files(db, batch.id):
+        raise Problem(410, "file_expired", "该批次已有文件超过保留期限，请创建新批次")
     if not db.scalar(select(BatchFile.id).where(BatchFile.batch_id == batch.id)):
         raise Problem(409, "empty_batch", "批次至少包含一个文件")
     batch.ready = True

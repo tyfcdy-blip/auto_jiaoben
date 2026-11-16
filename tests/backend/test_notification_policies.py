@@ -5,6 +5,7 @@ import uuid
 from pathlib import Path
 
 import httpx
+import pytest
 from cryptography.fernet import Fernet
 from jsonschema import Draft202012Validator
 from sqlalchemy import create_engine, inspect, select, text
@@ -296,7 +297,8 @@ def test_new_notification_tables_initialize_without_altering_existing_tables(tmp
     settings = Settings(env='test', database_url=database_url,
                         data_dir=tmp_path/'storage', secret_key=Fernet.generate_key().decode())
     engine, factory = database(settings)
-    added = {'channel_alert_policies', 'task_result_notification_configs', 'result_notifications'}
+    added = {'channel_alert_policies', 'task_result_notification_configs', 'result_notifications',
+             'file_retention'}
     try:
         Base.metadata.create_all(engine, tables=[table for table in Base.metadata.sorted_tables
                                                   if table.name not in added])
@@ -304,9 +306,24 @@ def test_new_notification_tables_initialize_without_altering_existing_tables(tmp
             db.add(Project(name='既有项目'))
         initialize(engine, factory)
         assert added.issubset(set(inspect(engine).get_table_names()))
+        index_names = {item['name'] for table in ('versions', 'batch_files', 'runs', 'artifacts', 'schedules')
+                       for item in inspect(engine).get_indexes(table)}
+        assert {'ix_retention_versions_bundle_sha256', 'ix_retention_batch_files_sha256',
+                'ix_retention_batch_files_created',
+                'ix_retention_runs_input_batch_state', 'ix_retention_runs_expected_input_state',
+                'ix_retention_artifacts_sha256', 'ix_retention_artifacts_created',
+                'ix_retention_schedules_input_batch',
+                'ix_retention_schedules_input_label'}.issubset(index_names)
         with factory() as db:
             assert db.scalar(select(Project).where(Project.name == '既有项目')) is not None
         initialize(engine, factory)
+        with engine.begin() as connection:
+            connection.execute(text('DROP INDEX ix_retention_batch_files_created'))
+            connection.execute(text(
+                'CREATE INDEX ix_retention_batch_files_created ON batch_files (size)',
+            ))
+        with pytest.raises(RuntimeError, match='索引不兼容'):
+            initialize(engine, factory)
     finally:
         engine.dispose()
         if maintenance:

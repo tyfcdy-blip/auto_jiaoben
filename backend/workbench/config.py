@@ -33,6 +33,13 @@ class Settings(BaseSettings):
     max_project_input_bytes: int = Field(default=10 * 1024 * 1024 * 1024, ge=1024)
     max_project_open_batches: int = Field(default=200, ge=1)
     max_project_program_bytes: int = Field(default=5 * 1024 * 1024 * 1024, ge=1024)
+    storage_warning_bytes: int = Field(default=45 * 1024 * 1024 * 1024, ge=1024)
+    storage_max_bytes: int = Field(default=60 * 1024 * 1024 * 1024, ge=1024)
+    storage_min_free_bytes: int = Field(default=1024 * 1024 * 1024, ge=0)
+    input_retention_days: int = Field(default=45, ge=1, le=3650)
+    artifact_retention_days: int = Field(default=45, ge=1, le=3650)
+    cleanup_interval_seconds: int = Field(default=300, ge=10, le=86400)
+    cleanup_batch_size: int = Field(default=200, ge=2, le=1000)
     max_queue: int = Field(default=1000, ge=1)
     max_log_chars: int = Field(default=2_000_000, ge=1000)
     dispatch_enabled: bool = True
@@ -52,6 +59,8 @@ class Settings(BaseSettings):
                 or self.max_project_input_bytes < self.max_batch_bytes
                 or self.max_project_program_bytes < self.max_upload_bytes):
             raise ValueError("容量限制必须满足单文件 ≤ 单批次/项目程序包 ≤ 对应项目配额")
+        if self.storage_warning_bytes >= self.storage_max_bytes:
+            raise ValueError("平台文件预警阈值必须小于硬上限")
         if self.secret_key:
             try:
                 Fernet(self.secret_key.encode())

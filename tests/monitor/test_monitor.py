@@ -60,6 +60,42 @@ def test_first_fault_restart_dedup_recovery_and_new_incident(tmp_path, capsys):
         assert json.loads(capsys.readouterr().out)["event_id"] != fault["event_id"]
 
 
+def test_controlled_component_reason_and_severity_escalation_create_new_event(tmp_path, capsys):
+    config = load_config(configuration(tmp_path))
+    code = {"value": "storage_warning"}
+    def components(_request):
+        return httpx.Response(503, json={"code": code["value"], "message": "private"})
+    with fake_client({"ready": 200, "components": components}) as client:
+        assert run_once(config, client, 1) == 1
+        warning = json.loads(capsys.readouterr().out)
+        assert warning["reason"] == "components:storage_warning"
+        code["value"] = "storage_pressure"
+        assert run_once(config, client, 2) == 1
+        pressure = json.loads(capsys.readouterr().out)
+        assert pressure["reason"] == "components:storage_pressure"
+        assert pressure["event_id"] != warning["event_id"]
+        assert run_once(config, client, 3) == 1
+        assert capsys.readouterr().out == ""
+
+
+def test_fault_reason_flapping_and_severity_downgrade_do_not_reset_budget(tmp_path, capsys):
+    config = load_config(configuration(tmp_path))
+    response = {"value": httpx.Response(503, json={"code": "storage_pressure"})}
+    def components(_request):
+        return response["value"]
+    with fake_client({"ready": 200, "components": components}) as client:
+        assert run_once(config, client, 1) == 1
+        first = json.loads(capsys.readouterr().out)
+        response["value"] = httpx.Response(503, json={"code": "storage_warning"})
+        assert run_once(config, client, 2) == 1
+        assert capsys.readouterr().out == ""
+        response["value"] = httpx.Response(503, text="temporary gateway failure")
+        assert run_once(config, client, 3) == 1
+        assert capsys.readouterr().out == ""
+    state = json.loads(config.state_file.read_text())
+    assert state["event"]["id"] == first["event_id"]
+
+
 @pytest.mark.parametrize("failure,reason", [
     (lambda request: httpx.Response(401), "HTTP_401"),
     (lambda request: httpx.Response(302, headers={"location": "https://example.invalid"}), "HTTP_302"),

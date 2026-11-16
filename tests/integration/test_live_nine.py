@@ -102,7 +102,7 @@ def test_live_nine_original_on_platform(nine_workspace, operation):
     workspace = fixture["workspace"]
     with workspace.engine.connect() as connection:
         loops_before = dict(connection.execute(text("SELECT name, last_success FROM loop_status")).all())
-    assert set(loops_before) == {"scheduler", "reconciler", "notifier"}
+    assert set(loops_before) == {"scheduler", "reconciler", "notifier", "storage_cleanup"}
     route = f"/api/v1/tasks/{fixture['tasks'][operation]}/runs"
     request = {"event_id": workspace.name + "-" + operation, "input_batch_id": fixture["batch_id"],
                "parameters": {"period": "2026-07", "mapping_file": "shops.xlsx",

@@ -17,6 +17,13 @@ import httpx
 
 from .notifications import signed_url
 
+CONTROLLED_INCIDENT_LEVELS = {
+    "components:storage_warning": 1,
+    "components:component_stale": 3,
+    "components:storage_cleanup_failed": 3,
+    "components:storage_pressure": 3,
+}
+
 
 @dataclass(frozen=True)
 class MonitorConfig:
@@ -155,7 +162,16 @@ def check_health(config: MonitorConfig, client: httpx.Client) -> tuple[bool, str
                                   headers={"Authorization": f"Bearer {config.monitor_token}"},
                                   timeout=config.timeout_seconds, follow_redirects=False)
             if response.status_code != 200:
-                failures.append(f"{endpoint}:HTTP_{response.status_code}")
+                controlled = None
+                if endpoint == "components" and response.status_code == 503:
+                    try:
+                        code = response.json().get("code")
+                        if code in {"component_stale", "storage_warning", "storage_pressure",
+                                    "storage_cleanup_failed"}:
+                            controlled = code
+                    except (ValueError, AttributeError):
+                        pass
+                failures.append(f"{endpoint}:{controlled or f'HTTP_{response.status_code}'}")
             else:
                 body = response.json()
                 if not isinstance(body, dict) or body.get("status") != expected:
@@ -197,7 +213,12 @@ def run_once(config: MonitorConfig, client: httpx.Client, now: float | None = No
         state = load_state(config)
         healthy, reason = check_health(config, client)
         previous = state["healthy"]
-        if previous != healthy and (not healthy or previous is False):
+        previous_reason = state.get("reason")
+        escalated = (not healthy and previous is False
+                     and previous_reason in CONTROLLED_INCIDENT_LEVELS
+                     and reason in CONTROLLED_INCIDENT_LEVELS
+                     and CONTROLLED_INCIDENT_LEVELS[reason] > CONTROLLED_INCIDENT_LEVELS[previous_reason])
+        if (previous != healthy and (not healthy or previous is False)) or escalated:
             # 恢复时丢弃尚未送达的旧故障消息，避免恢复以后继续发送过时告警。
             state["event"] = {"id": uuid.uuid4().hex, "kind": "recovery" if healthy else "fault",
                               "reason": reason, "attempts": 0, "delivered": False, "next_attempt_at": now}

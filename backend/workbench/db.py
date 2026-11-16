@@ -36,6 +36,20 @@ def initialize(engine, factory):
             if set(table.columns.keys()) - actual:
                 raise RuntimeError("既有数据库结构不兼容；禁止自动覆盖，请使用经验证的迁移或独立测试库")
     Base.metadata.create_all(engine)
+    # create_all不会为已存在的表补索引；保留清理查询的索引须显式、幂等创建。
+    for table in Base.metadata.sorted_tables:
+        for index in table.indexes:
+            if index.name.startswith("ix_retention_"):
+                index.create(engine, checkfirst=True)
+    index_inspector = inspect(engine)
+    for table in Base.metadata.sorted_tables:
+        expected = {index.name: [column.name for column in index.columns]
+                    for index in table.indexes if index.name.startswith("ix_retention_")}
+        if not expected:
+            continue
+        actual = {index["name"]: index["column_names"] for index in index_inspector.get_indexes(table.name)}
+        if any(actual.get(name) != columns for name, columns in expected.items()):
+            raise RuntimeError("既有数据库保留策略索引不兼容；禁止使用同名错误索引")
     with factory.begin() as session:
         if session.get(Gate, 1) is None:
             session.add(Gate(id=1, schema_version=1, dispatch_enabled=True))

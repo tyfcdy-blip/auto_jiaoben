@@ -5,6 +5,7 @@ from .config import Settings
 from .db import database, lock
 from .notifications import send_one
 from .scheduling import scan_health, scan_schedules
+from .retention import cleanup_files
 
 logger = logging.getLogger(__name__)
 
@@ -15,6 +16,7 @@ def tick(factory, settings):
         scan_schedules(db, settings)
         scan_health(db, settings)
     send_one(factory, settings)
+    cleanup_files(factory, settings)
 
 
 def main():

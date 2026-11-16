@@ -1,7 +1,7 @@
 """持久实体；运行状态、投递状态和审计分别保存。"""
 import time
 import uuid
-from sqlalchemy import Float, ForeignKey, Integer, JSON, String, Text, UniqueConstraint
+from sqlalchemy import Float, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -70,7 +70,8 @@ class Program(Entity, Base):
 
 class Version(Entity, Base):
     __tablename__ = "versions"
-    __table_args__ = (UniqueConstraint("program_id", "name"),)
+    __table_args__ = (UniqueConstraint("program_id", "name"),
+                      Index("ix_retention_versions_bundle_sha256", "bundle_sha256"))
     program_id: Mapped[str] = mapped_column(ForeignKey("programs.id"))
     name: Mapped[str] = mapped_column(String(100))
     command: Mapped[list] = mapped_column(JSON)
@@ -149,7 +150,9 @@ class Batch(Entity, Base):
 
 class BatchFile(Entity, Base):
     __tablename__ = "batch_files"
-    __table_args__ = (UniqueConstraint("batch_id", "name"),)
+    __table_args__ = (UniqueConstraint("batch_id", "name"),
+                      Index("ix_retention_batch_files_sha256", "sha256"),
+                      Index("ix_retention_batch_files_created", "created_at", "id"))
     batch_id: Mapped[str] = mapped_column(ForeignKey("batches.id"))
     name: Mapped[str] = mapped_column(String(180))
     sha256: Mapped[str] = mapped_column(String(64))
@@ -168,6 +171,10 @@ class Caller(Entity, Base):
 
 class Run(Entity, Base):
     __tablename__ = "runs"
+    __table_args__ = (
+        Index("ix_retention_runs_input_batch_state", "input_batch_id", "state"),
+        Index("ix_retention_runs_expected_input_state", "project_id", "expected_input_label", "state"),
+    )
     project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), index=True)
     task_id: Mapped[str] = mapped_column(ForeignKey("tasks.id"), index=True)
     version_id: Mapped[str] = mapped_column(ForeignKey("versions.id"))
@@ -222,15 +229,38 @@ class LogEntry(Entity, Base):
 
 class Artifact(Entity, Base):
     __tablename__ = "artifacts"
-    __table_args__ = (UniqueConstraint("run_id", "name"),)
+    __table_args__ = (UniqueConstraint("run_id", "name"),
+                      Index("ix_retention_artifacts_sha256", "sha256"),
+                      Index("ix_retention_artifacts_created", "created_at", "id"))
     run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"))
     name: Mapped[str] = mapped_column(String(180))
     sha256: Mapped[str] = mapped_column(String(64))
     size: Mapped[int] = mapped_column(Integer)
 
 
+class FileRetention(Base):
+    """文件引用的逻辑过期记录；业务元数据保留，物理对象可独立回收。"""
+    __tablename__ = "file_retention"
+    __table_args__ = (Index("ix_retention_file_cleanup_queue", "deletion_state", "next_try"),)
+    kind: Mapped[str] = mapped_column(String(20), primary_key=True)
+    record_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    project_id: Mapped[str] = mapped_column(String(36), index=True)
+    sha256: Mapped[str] = mapped_column(String(64), index=True)
+    size: Mapped[int] = mapped_column(Integer)
+    expired_at: Mapped[float] = mapped_column(Float)
+    deletion_state: Mapped[str] = mapped_column(String(20), default="pending", index=True)
+    attempts: Mapped[int] = mapped_column(default=0)
+    next_try: Mapped[float] = mapped_column(Float, default=0)
+    deleted_at: Mapped[float | None] = mapped_column(Float)
+    last_error: Mapped[str | None] = mapped_column(String(100))
+
+
 class Schedule(Entity, Base):
     __tablename__ = "schedules"
+    __table_args__ = (
+        Index("ix_retention_schedules_input_batch", "input_batch_id"),
+        Index("ix_retention_schedules_input_label", "project_id", "input_label"),
+    )
     task_id: Mapped[str] = mapped_column(ForeignKey("tasks.id"))
     project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"))
     name: Mapped[str] = mapped_column(String(100))

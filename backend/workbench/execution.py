@@ -10,6 +10,7 @@ from .storage import canonical, content_hash, validate_parameters
 from .input_sources import (DIRECTORY_CAPABILITY, roots_are_subset, uses_directory,
                             validate_directory_run)
 from .node_config import CONFIG_CAPABILITY, active_grants, configuration_ready, grant_for
+from .retention import batch_has_expired_files
 
 ACTIVE = {"leased", "running", "cancel_requested", "unknown"}
 TERMINAL = {"succeeded", "failed", "partial", "canceled"}
@@ -217,6 +218,8 @@ def admit(db, settings, task, actor, event_id, parameters, batch_id, source, exp
             batch_id = batch.id
     elif task.requires_input:
         raise Problem(422, "missing_batch", "任务需要明确输入批次")
+    if batch and batch_has_expired_files(db, batch.id):
+        raise Problem(410, "file_expired", "输入批次已超过保留期限，请上传新批次")
     fields = task.business_key_fields
     if any(field not in resolved for field in fields):
         raise Problem(422, "missing_business_key", "业务去重字段必须有值")
