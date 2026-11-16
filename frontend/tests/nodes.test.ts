@@ -379,7 +379,9 @@ it('登记后可下载一键接入包且不会重复签发节点', async () => {
       String(call[0]).endsWith('/agent-packages/windows'),
     ),
   ).toBe(true)
-  expect(createObjectURL).toHaveBeenCalledTimes(1)
+  await vi.waitFor(() => {
+    expect(createObjectURL).toHaveBeenCalledTimes(1)
+  })
 })
 
 it('平台管理员可一次保存电脑根目录和多个项目授权', async () => {
