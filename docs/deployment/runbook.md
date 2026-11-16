@@ -45,7 +45,7 @@ docker compose --env-file deploy/.env.example -f deploy/compose.yaml stop api wo
 
 ```bash
 python deploy/bootstrap.py \
-  --directory /srv/automation-workbench/secrets \
+  --directory /mnt/docker/automation-workbench/secrets \
   --external-database \
   --database-host <网络内主机名> \
   --database-port 5432 \
@@ -66,13 +66,18 @@ docker compose --env-file deploy/.env.production \
 
 `init-db` 会作为依赖先运行，只创建/核对本项目数据库中的表；检测到同名但缺字段的旧结构会拒绝覆盖。共享实例的重启、磁盘、内存、连接数和故障会同时影响现有数据服务与工作台，必须由服务器管理员统一设置资源水位和变更窗口。
 
-构建和推送分开；构建命令不会自动发布。以下使用占位环境变量，必须由具体发布单补齐后执行：
+构建和推送分开；构建命令不会自动发布。`/automation/`是前端编译参数，不能拿根路径镜像仅修改运行环境冒充兼容。离线生产候选使用固定平台、基础镜像摘要、版本、提交和子路径构建：
 
-```powershell
-docker compose --env-file deploy/.env.production -f deploy/compose.yaml build
-docker image inspect $env:WB_IMAGE --format '{{.Id}}'
-# 获得本次仓库推送授权后才执行：
-docker push $env:WB_IMAGE
+```bash
+docker build --platform linux/amd64 \
+  --build-arg NODE_IMAGE=node@sha256:43ac6c60b8f89723f746e8a92ce91abd5017e627ce1ddfe4238355d3a30b772c \
+  --build-arg PYTHON_IMAGE=python@sha256:392307d22300de8b5986851a12d9176dfc0fc073e65bf6523ebd7dcbeb23564e \
+  --build-arg VITE_BASE_PATH=/automation/ \
+  --build-arg RELEASE_VERSION=<版本> \
+  --build-arg VCS_REF=<40位提交> \
+  --tag automation-workbench:<版本> .
+python deploy/verify_release_image.py --image automation-workbench:<版本> \
+  --version <版本> --commit <40位提交> --base-path /automation
 ```
 
 服务器只拉取经批准的镜像，Compose 的 `build` 配置不等于允许服务器临时重新构建；部署使用 `up --no-build`。获取并保存仓库 RepoDigest，生产 `WB_IMAGE` 应使用该摘要。当前没有生产镜像推送或部署授权。
@@ -81,7 +86,7 @@ docker push $env:WB_IMAGE
 
 `deploy/nginx.conf.example` 是现有 HTTPS server 的追加片段，不能覆盖现有站点配置。`WB_BASE_PATH=/automation` 时代理保留 `/automation`，不剥离前缀。前端资源、API、登录和下载均需通过该前缀验收。默认 API 不信任任意代理头；若部署层确实依赖它们，只信任明确的代理地址，不能全局信任所有来源。
 
-前端 `VITE_BASE_PATH` 是构建参数，Compose 从同一 `WB_BASE_PATH` 派生并补尾斜线。修改部署前缀必须重新构建相应前端镜像，不能只改后端运行环境；每个发布清单记录其编译前缀。
+前端 `VITE_BASE_PATH` 是构建参数，Compose 从同一 `WB_BASE_PATH` 派生并补尾斜线。修改部署前缀必须重新构建相应前端镜像，不能只改后端运行环境；每个发布清单记录其编译前缀。`verify_release_image.py`会拒绝平台、OCI版本/提交或静态资源前缀不一致的镜像。
 
 推荐使用独立 Compose 项目。复用数据库只共享管理员指定的外部Docker网络，不把工作台服务并入数据服务的Compose项目。若必须追加到共享 Compose，先把 `db/init-db/api/worker/init-admin`、命名卷、网络及 secrets 改成唯一的 `workbench_` 前缀，同步数据库 URL 的主机名、服务依赖、配置路径和操作脚本。不得直接把根级 `name:` 和 `services:` 文本覆盖共享文件。
 

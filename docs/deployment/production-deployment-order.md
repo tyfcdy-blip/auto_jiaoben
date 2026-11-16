@@ -1,6 +1,6 @@
 # 自动化工作台生产部署单
 
-状态：已按服务器数据库拓扑预填，仍待补充网络/账号/容量并审批。发布候选：v0.6.0-rc.2，2026-11-16。
+状态：已按服务器现场信息预填，容量、账号、备份和审批仍阻断上线。目标候选：v0.6.0-rc.3，2026-11-16。`v0.6.0-rc.2`前端按根路径构建，不得用于`/automation/`。
 
 本部署单用于把已验证发布候选部署到明确服务器。任何占位项、失败检查或未关闭P0/P1都会阻断继续执行。首次上线范围只允许 `side_effects=false` 的无外部写入程序；当前版本在配置层明确拒绝开启正式副作用执行。
 
@@ -8,9 +8,9 @@
 
 | 项目 | 实际值 | 核对人/证据 |
 | --- | --- | --- |
-| Git tag | `v0.6.0-rc.2`；上一回滚基线`v0.6.0-rc.1` | 本地annotated tag已核对 |
-| 完整 commit SHA | `d12812091db4da0bd82e4a70be4c53ce80604b41` | tag解引用一致 |
-| 应用镜像 | 本地ID `sha256:878b2a…2868`；生产RepoDigest待仓库提供 | 离线包SHA-256见发布清单；禁止只凭tag |
+| Git tag | `v0.6.0-rc.3`待建立；`v0.6.0-rc.2`保留但禁止部署 | rc.2静态资源为`/assets/*`，与现场子路径不兼容 |
+| 完整 commit SHA | rc.3建立后填写 | tag必须解引用一致 |
+| 应用镜像 | `linux/amd64`离线包待重新构建 | 必须核对OCI revision、`/automation/assets/*`和SHA-256 |
 | 基础镜像摘要 | Node/Python/PostgreSQL均待填写 | 漏洞和许可证记录待填写 |
 | 部署日期与窗口 | 待填写 | 待填写 |
 | 发布负责人/回退负责人 | 待填写 | 待填写 |
@@ -20,46 +20,47 @@
 
 | 项目 | 实际值 |
 | --- | --- |
-| 服务器用途及资产编号 | 待填写 |
-| OS、版本、CPU架构 | 待填写 |
-| CPU、内存、数据盘可用容量 | 待填写 |
-| Docker Engine / Compose版本 | 待填写 |
+| 服务器用途及资产编号 | 慕雅居多项目Docker服务器；资产编号待填写 |
+| OS、版本、CPU架构 | CentOS Linux 7 (Core)，`x86_64`；目标镜像`linux/amd64` |
+| CPU、内存 | 8逻辑CPU、15G内存 |
+| Docker Engine / Compose版本 | 26.1.4 / v2.27.1 |
 | 现有数据服务部署目录 | `/mnt/docker/data-reservoir`，仅作边界参考；工作台必须使用另一个目录 |
-| 工作台部署绝对目录 | 待填写 |
-| 容器镜像仓库地址 | 待填写 |
+| 工作台部署绝对目录 | `/mnt/docker/automation-workbench` |
+| 镜像交付 | 离线固定版本镜像包及SHA-256 |
 | 共享入口 | Docker内共享Nginx；入口网络 `basic_basic_net` |
-| 内网域名与最终URL | 建议复用 `https://ai.muyaju.net/<独立路径>/`，实际路径待确认 |
+| 最终URL | `https://ai.muyaju.net/automation/` |
 | TLS证书来源、有效期、续期责任人 | 待填写 |
-| PostgreSQL实例 | 已有 PostgreSQL 17；容器 `muyaju-data-reservoir-db-1`，容器端口5432，无宿主机映射 |
+| PostgreSQL实例 | 17.11；容器 `muyaju-data-reservoir-db-1`，容器端口5432，无宿主机映射 |
 | PostgreSQL持久卷 | `muyaju-data-reservoir-pg17`；工作台不得直接操作或整卷恢复 |
-| 工作台数据库/用户 | 由管理员新建，独立库、独立用户、独立密码；名称待填写 |
-| 数据库Docker网络名/主机名 | 均待部署方提供；禁止写死容器IP |
-| PostgreSQL和平台文件备份目标 | 按工作台数据库单独dump；平台卷同恢复点备份，目标待填写 |
+| 工作台数据库/用户 | 拟定`automation_workbench` / `automation_workbench_user`；尚未创建 |
+| 数据库Docker网络名/主机名 | 网络`muyaju-data-reservoir_database`已确认；候选主机名`muyaju-data-reservoir-db-1`待容器内验证 |
+| PostgreSQL和平台文件备份目标 | 数据库建议`/data/automation-workbench-backups`；平台文件目标待定 |
 | 日备份保留天数、异地副本 | 待填写 |
-| `/data`容量基线 | 2026-11-13曾仅余约24GB、使用率88%；上线前必须重测，不能沿用历史值 |
+| `/data`容量现场值 | 总197GB、已用173GB、可用15GB、使用率93%；当前为上线阻断项 |
 | 预计用户/电脑/任务/日运行量 | 待填写 |
 | 单文件、单批次、项目容量配额 | 待填写并与磁盘预算核对 |
 
-最低资源建议不能替代容量测算。生产复用现有PostgreSQL，工作台Compose只限制API和Worker；共享数据库的CPU、内存、连接数、磁盘和重启窗口由服务器管理员统一核算，服务器还要为反向代理、日志、镜像、备份和升级临时空间预留容量。
+最低资源建议不能替代容量测算。当前生产模板原默认单项目输入与程序包配额合计可达15GB，已经等于`/data`全部可用空间，且尚未计数据库、结果、日志、备份和升级临时空间，因此模板已改为强制填写容量值，未批准前应用不能正常启动。还须核对Docker Root Dir和`platform_data`卷实际落盘文件系统。CentOS 7已停止常规维护，容器隔离不能替代宿主内核安全；上线前需要服务器升级计划或明确风险接受。
 
 ## 3. 网络矩阵
 
 | 来源 | 目标 | 端口 | 用途 | 验证结果 |
 | --- | --- | --- | --- | --- |
-| 管理员浏览器 | 工作台域名 | TCP 443 | 页面、API和文件下载 | 待验证 |
+| 管理员浏览器 | `ai.muyaju.net/automation/` | TCP 443 | 页面、API和文件下载 | 待部署验证 |
 | 执行电脑Agent | 工作台域名 | TCP 443 | 心跳、领取、日志和产物 | 待验证 |
 | 影刀/外部调用方 | 工作台域名 | TCP 443 | 事件触发和文件上传 | 待验证 |
 | 工作台服务器 | `oapi.dingtalk.com` | TCP 443 | 钉钉消息 | 待验证 |
 | 执行电脑 | UNC文件服务器 | TCP 445或实际端口 | 共享目录输入，可选 | 待验证 |
-| 服务器本地运维 | `127.0.0.1:18080` | TCP 18080 | 仅本机诊断入口 | 待验证 |
-| 工作台容器 | 管理员提供的数据库主机名 | TCP 5432（Docker内网） | 仅访问工作台独立数据库 | 待验证 |
-| 共享Nginx容器 | 工作台API容器 | TCP 8000（Docker内网） | 独立路径HTTPS转发 | 待验证 |
+| 服务器本地运维 | `127.0.0.1:18080` | TCP 18080 | 仅本机诊断入口 | 现场未占用，待部署验证 |
+| 工作台容器 | `muyaju-data-reservoir-db-1`候选别名 | TCP 5432（Docker内网） | 仅访问工作台独立数据库 | 网络已确认，解析/权限待验证 |
+| 共享Nginx容器 | `automation-workbench-api:8000` | TCP 8000（`basic_basic_net`） | `/automation/`转发 | 网络已确认，配置待审批 |
 
 PostgreSQL继续不映射宿主端口，不对公网或办公网开放。工作台的 `init-db/api/worker` 只加入管理员指定的数据库网络，使用稳定主机名连接；执行电脑由Agent主动连接工作台，不开放执行电脑入站管理端口。
 
 ## 4. 部署前门禁
 
 - [ ] Git tag、commit、镜像RepoDigest和镜像OCI revision完全一致；
+- [ ] 镜像为`linux/amd64`，首页全部本地资源使用`/automation/assets/`，不得出现根路径`/assets/`；
 - [ ] 当前提交的后端、前端、构建、静态检查和Compose验证全部通过；
 - [ ] 实际生产 `.env.production` 不在Git中且没有占位值；
 - [ ] 独立生产秘密目录已生成、权限已核对，秘密未出现在终端记录或群消息；
@@ -68,7 +69,8 @@ PostgreSQL继续不映射宿主端口，不对公网或办公网开放。工作�
 - [ ] 工作台账号连接上限已设置并覆盖API/Worker连接池及初始化余量；默认两个进程合计最多20条应用连接；
 - [ ] 数据库密码、Fernet密钥、监控Token和管理员初始密码有独立受控备份；
 - [ ] 域名、TLS和反向代理配置经过配置审查；
-- [ ] `/data`实际剩余容量已重测，并计入镜像、数据库增长、日志、备份和迁移临时空间；
+- [ ] 已处理`/data`使用率93%的容量阻断，并核对Docker Root Dir、平台卷落盘位置、增长配额、日志、备份和迁移临时空间；
+- [ ] CentOS 7宿主风险已有升级计划或经授权的限期风险接受记录；
 - [ ] 管理员已给出工作台数据库的项目级备份/恢复命令、位置、保留周期、恢复负责人和恢复演练日期；
 - [ ] 首台试点执行电脑使用专用低权限Windows账号，Python/Node及目录权限已准备；
 - [ ] 首批脚本均无生产秘密、无外部写入，并通过程序包扫描和脱敏数据测试；
@@ -83,17 +85,17 @@ PostgreSQL继续不映射宿主端口，不对公网或办公网开放。工作�
 1. 拉取并核对源码tag或仅取得经过批准的部署文件；服务器不临时改代码。
 2. 复制 `deploy/.env.production.example` 为不纳入Git的实际环境文件，填完全部占位项。
 3. 由服务器管理员创建工作台独立数据库和用户；应用账号不得访问现有数据服务数据库。管理员把密码放入仅部署人员可读的临时文件，不把密码放到命令参数、env或群聊。
-4. 生成工作台秘密；发现已有目录立即停止，不能覆盖：
+4. 管理员把数据库密码临时写入`/mnt/docker/automation-workbench/bootstrap-input/db_password`并限制权限。生成工作台秘密后安全删除该临时输入；发现输出目录已有凭据立即停止，不能覆盖：
 
    ```bash
    python deploy/bootstrap.py \
-     --directory <生产秘密绝对目录> \
+     --directory /mnt/docker/automation-workbench/secrets \
      --external-database \
-     --database-host <管理员提供的网络内主机名> \
+     --database-host muyaju-data-reservoir-db-1 \
      --database-port 5432 \
-     --database-name <工作台独立数据库名> \
-     --database-user <工作台独立用户名> \
-     --database-password-file <受控密码文件>
+     --database-name automation_workbench \
+     --database-user automation_workbench_user \
+     --database-password-file /mnt/docker/automation-workbench/bootstrap-input/db_password
    ```
 
 5. 以 `WB_DISPATCH_ENABLED=false` 解析外部数据库配置：
@@ -169,7 +171,7 @@ PostgreSQL继续不映射宿主端口，不对公网或办公网开放。工作�
 
 | 状态 | 结果 |
 | --- | --- |
-| Codex开发与自动化验证 | v0.6.0-rc.2已建立本地tag、固定OCI提交标签和离线包；全量及隔离外部PG冒烟通过 |
+| Codex开发与自动化验证 | rc.2核心链路通过，但前端构建路径不符合现场；rc.3重新构建和验证中 |
 | CI | 未执行 |
 | 开发人员自测确认 | 未确认 |
 | 人工代码评审 | 未执行 |
