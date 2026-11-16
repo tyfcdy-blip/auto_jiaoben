@@ -132,8 +132,11 @@ def main() -> None:
     parser.add_argument("--directory", type=Path, required=True)
     parser.add_argument("--confirm-project", default="")
     parser.add_argument("--note", default="")
+    parser.add_argument("--database-mode", choices=("bundled", "external"), default="bundled")
     args = parser.parse_args()
     try:
+        if args.database_mode == "external":
+            raise ValueError("外部数据库由服务器管理员备份恢复；本工具仅支持自带数据库")
         prefix = command(args.project, args.env_file)
         directory = args.directory.resolve()
         if args.action == "backup":

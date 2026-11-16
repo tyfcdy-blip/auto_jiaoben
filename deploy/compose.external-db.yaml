@@ -1,0 +1,14 @@
+services:
+  init-db:
+    networks: [workbench, database]
+  api:
+    networks: [workbench, database]
+  worker:
+    networks: [workbench, database]
+  init-admin:
+    networks: [workbench, database]
+
+networks:
+  database:
+    external: true
+    name: "${WB_DATABASE_NETWORK:?外部数据库模式必须配置WB_DATABASE_NETWORK}"

@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tarfile
 
 import pytest
@@ -27,22 +28,60 @@ bootstrap = load_module("bootstrap")
 operations = load_module("operations")
 
 
-@pytest.fixture(scope="module")
-def rendered_compose():
+def compose_command():
     standalone = shutil.which("docker-compose")
     if standalone is None and os.name == "nt":
         candidate = Path(r"C:\Program Files\Docker\Docker\resources\bin\docker-compose.exe")
         standalone = str(candidate) if candidate.exists() else None
     if standalone:
-        command = [standalone]
-    elif shutil.which("docker"):
-        command = ["docker", "compose"]
-    else:
-        pytest.skip("本机未安装Compose；部署配置解析未验证")
+        return [standalone]
+    if shutil.which("docker"):
+        return ["docker", "compose"]
+    pytest.skip("本机未安装Compose；部署配置解析未验证")
+
+
+@pytest.fixture(scope="module")
+def rendered_compose():
+    command = compose_command()
     env = {key: value for key, value in os.environ.items() if not key.startswith("WB_")}
     response = subprocess.run(
-        command + ["--file", str(ROOT / "deploy" / "compose.yaml"), "--profile", "admin",
+        command + ["--file", str(ROOT / "deploy" / "compose.yaml"),
+                   "--profile", "bundled-db", "--profile", "admin",
                    "config", "--format", "json"],
+        check=True, capture_output=True, text=True, encoding="utf-8", timeout=20, env=env,
+    )
+    return json.loads(response.stdout)
+
+
+@pytest.fixture(scope="module")
+def rendered_external_compose():
+    env = {key: value for key, value in os.environ.items() if not key.startswith("WB_")}
+    env["WB_DATABASE_NETWORK"] = "synthetic-existing-postgres"
+    response = subprocess.run(
+        compose_command() + [
+            "--file", str(ROOT / "deploy" / "compose.yaml"),
+            "--file", str(ROOT / "deploy" / "compose.external-db.yaml"),
+            "--profile", "admin", "config", "--format", "json",
+        ],
+        check=True, capture_output=True, text=True, encoding="utf-8", timeout=20, env=env,
+    )
+    return json.loads(response.stdout)
+
+
+@pytest.fixture(scope="module")
+def rendered_server_compose():
+    env = {key: value for key, value in os.environ.items() if not key.startswith("WB_")}
+    env.update({
+        "WB_DATABASE_NETWORK": "synthetic-existing-postgres",
+        "WB_INGRESS_NETWORK": "synthetic-shared-nginx",
+    })
+    response = subprocess.run(
+        compose_command() + [
+            "--file", str(ROOT / "deploy" / "compose.yaml"),
+            "--file", str(ROOT / "deploy" / "compose.external-db.yaml"),
+            "--file", str(ROOT / "deploy" / "compose.shared-nginx.yaml"),
+            "config", "--format", "json",
+        ],
         check=True, capture_output=True, text=True, encoding="utf-8", timeout=20, env=env,
     )
     return json.loads(response.stdout)
@@ -66,11 +105,36 @@ def test_secrets_are_unique_valid_and_never_overwritten(tmp_path, capsys):
 def test_database_is_private_and_startup_is_ordered(rendered_compose):
     services = rendered_compose["services"]
     assert not services["db"].get("ports")
-    assert services["init-db"]["depends_on"]["db"]["condition"] == "service_healthy"
+    assert services["db"]["profiles"] == ["bundled-db"]
+    assert not services["init-db"].get("depends_on")
     for name in ("api", "worker"):
         assert services[name]["depends_on"]["init-db"]["condition"] == "service_completed_successfully"
     assert services["init-admin"]["profiles"] == ["admin"]
     assert services["init-admin"]["command"][-1] == "init-admin"
+
+
+def test_external_database_mode_does_not_start_bundled_database(rendered_external_compose):
+    services = rendered_external_compose["services"]
+    assert "db" not in services
+    for name in ("init-db", "api", "worker", "init-admin"):
+        assert set(services[name]["networks"]) == {"workbench", "database"}
+    assert rendered_external_compose["networks"]["database"]["name"] == (
+        "synthetic-existing-postgres"
+    )
+
+
+def test_server_mode_connects_only_api_to_shared_nginx(rendered_server_compose):
+    services = rendered_server_compose["services"]
+    assert "db" not in services
+    assert set(services["api"]["networks"]) == {"workbench", "database", "ingress"}
+    assert services["api"]["networks"]["ingress"]["aliases"] == [
+        "automation-workbench-api"
+    ]
+    for name in ("init-db", "worker"):
+        assert "ingress" not in services[name]["networks"]
+    assert rendered_server_compose["networks"]["ingress"]["name"] == (
+        "synthetic-shared-nginx"
+    )
 
 
 def test_business_secrets_are_not_environment_values(rendered_compose):
@@ -87,6 +151,56 @@ def test_business_secrets_are_not_environment_values(rendered_compose):
         assert all("docker.sock" not in str(volume) for volume in service.get("volumes", []))
 
 
+def test_external_database_secret_url_encodes_password(tmp_path):
+    directory = tmp_path / "external-private"
+    password = "synthetic:/?#[]@!$&'()*+,;=% password"
+    bootstrap.initialize(
+        directory,
+        database_host="shared-postgres",
+        database_port=5432,
+        database_name="automation_workbench",
+        database_user="automation_user",
+        database_password=password,
+    )
+    url = (directory / "database_url").read_text(encoding="utf-8").strip()
+    assert "shared-postgres:5432/automation_workbench" in url
+    assert password not in url
+    assert "%2F" in url and "%40" in url and "%20" in url
+    assert (directory / "database_password").read_text(encoding="utf-8").strip() == password
+
+
+@pytest.mark.parametrize(
+    "settings",
+    [
+        {"database_host": "bad host"},
+        {"database_port": 0},
+        {"database_name": "bad-name"},
+        {"database_user": "9invalid"},
+        {"database_password": ""},
+        {"database_password": "line\nbreak"},
+    ],
+)
+def test_external_database_secret_rejects_invalid_connection_settings(tmp_path, settings):
+    options = {
+        "database_host": "shared-postgres",
+        "database_port": 5432,
+        "database_name": "automation_workbench",
+        "database_user": "automation_user",
+        "database_password": "synthetic-password",
+    }
+    options.update(settings)
+    with pytest.raises(ValueError):
+        bootstrap.initialize(tmp_path / "private", **options)
+    assert not (tmp_path / "private").exists()
+
+
+def test_external_database_password_file_rejects_multiple_lines(tmp_path):
+    source = tmp_path / "password"
+    source.write_text("first-line\nsecond-line\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="只有一行"):
+        bootstrap._read_password_file(source)
+
+
 def test_local_bind_and_bounded_logs(rendered_compose):
     for port in rendered_compose["services"]["api"]["ports"]:
         assert port["host_ip"] == "127.0.0.1"
@@ -99,6 +213,27 @@ def test_local_bind_and_bounded_logs(rendered_compose):
 def test_operations_reject_ambiguous_project_name(name):
     with pytest.raises(ValueError):
         operations.command(name)
+
+
+def test_operations_external_database_mode_refuses_before_any_io(monkeypatch, tmp_path, capsys):
+    def forbidden(*args, **kwargs):
+        raise AssertionError("外部数据库模式不得构造或执行自带数据库命令")
+
+    monkeypatch.setattr(operations, "command", forbidden)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "operations.py", "backup", "--project", "isolated-test",
+            "--directory", str(tmp_path / "backup"), "--note", "synthetic",
+            "--database-mode", "external",
+        ],
+    )
+    with pytest.raises(SystemExit) as error:
+        operations.main()
+    assert error.value.code == 1
+    assert not (tmp_path / "backup").exists()
+    assert "操作未完成" in capsys.readouterr().err
 
 
 def test_backup_refuses_active_services(monkeypatch, tmp_path):

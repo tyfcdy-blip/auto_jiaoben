@@ -1,0 +1,10 @@
+services:
+  api:
+    networks:
+      ingress:
+        aliases: [automation-workbench-api]
+
+networks:
+  ingress:
+    external: true
+    name: "${WB_INGRESS_NETWORK:?共享Nginx模式必须配置WB_INGRESS_NETWORK}"

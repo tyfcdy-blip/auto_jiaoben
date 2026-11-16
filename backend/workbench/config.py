@@ -11,6 +11,11 @@ class Settings(BaseSettings):
     env: str = "development"
     database_url: str = "sqlite:///./runtime/workbench.db"
     database_url_file: str | None = None
+    database_connect_attempts: int = Field(default=30, ge=1, le=300)
+    database_connect_interval_seconds: float = Field(default=2.0, ge=0, le=30)
+    database_pool_size: int = Field(default=5, ge=1, le=20)
+    database_max_overflow: int = Field(default=5, ge=0, le=20)
+    database_pool_timeout_seconds: int = Field(default=30, ge=1, le=120)
     data_dir: Path = Path("runtime/storage")
     secret_key: str = ""
     secret_key_file: str | None = None

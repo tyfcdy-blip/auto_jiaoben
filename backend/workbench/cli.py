@@ -2,12 +2,41 @@ import argparse
 import getpass
 import json
 import os
+import sys
+import time
 from pathlib import Path
 from sqlalchemy import select
+from sqlalchemy.exc import OperationalError
 from .config import Settings
 from .db import database, initialize, lock
 from .models import User
 from .security import hasher
+
+
+def retryable_database_error(error: OperationalError) -> bool:
+    sqlstate = getattr(error.orig, "sqlstate", None) or getattr(error.orig, "pgcode", None)
+    return sqlstate is None or sqlstate.startswith("08") or sqlstate in {"57P03", "53300"}
+
+
+def initialize_database(settings: Settings, engine, factory, sleeper=time.sleep) -> None:
+    """等待数据库可连接后初始化；结构不兼容等非连接错误必须立即失败。"""
+    for attempt in range(1, settings.database_connect_attempts + 1):
+        try:
+            initialize(engine, factory)
+            return
+        except OperationalError as error:
+            if not retryable_database_error(error):
+                raise
+            engine.dispose()
+            if attempt == settings.database_connect_attempts:
+                raise RuntimeError(
+                    f"数据库在{settings.database_connect_attempts}次连接尝试后仍不可用"
+                ) from None
+            print(
+                f"数据库尚不可用，等待后重试（{attempt}/{settings.database_connect_attempts}）",
+                file=sys.stderr,
+            )
+            sleeper(settings.database_connect_interval_seconds)
 
 
 def main():
@@ -25,7 +54,7 @@ def main():
     engine, factory = database(settings)
     try:
         if args.command == "init-db":
-            initialize(engine, factory)
+            initialize_database(settings, engine, factory)
             print("数据库结构版本 1 已就绪；未创建默认账号")
             return
         username = os.environ.get("WB_ADMIN_USERNAME") or input("管理员账号：")

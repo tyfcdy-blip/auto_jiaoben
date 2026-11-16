@@ -25,6 +25,11 @@ x-platform: &platform
   environment: &platform-environment
     WB_ENV: ${WB_ENV:-development}
     WB_DATABASE_URL_FILE: /run/secrets/database_url
+    WB_DATABASE_CONNECT_ATTEMPTS: ${WB_DATABASE_CONNECT_ATTEMPTS:-30}
+    WB_DATABASE_CONNECT_INTERVAL_SECONDS: ${WB_DATABASE_CONNECT_INTERVAL_SECONDS:-2}
+    WB_DATABASE_POOL_SIZE: ${WB_DATABASE_POOL_SIZE:-5}
+    WB_DATABASE_MAX_OVERFLOW: ${WB_DATABASE_MAX_OVERFLOW:-5}
+    WB_DATABASE_POOL_TIMEOUT_SECONDS: ${WB_DATABASE_POOL_TIMEOUT_SECONDS:-30}
     WB_SECRET_KEY_FILE: /run/secrets/encryption_key
     WB_MONITOR_TOKEN_FILE: /run/secrets/monitor_token
     WB_DATA_DIR: /app/data
@@ -48,6 +53,7 @@ x-platform: &platform
 
 services:
   db:
+    profiles: [bundled-db]
     image: ${WB_POSTGRES_IMAGE:-postgres:17-bookworm}
     environment:
       POSTGRES_DB: workbench
@@ -74,8 +80,6 @@ services:
     command: [python, -m, workbench.cli, init-db]
     restart: "no"
     healthcheck: {disable: true}
-    depends_on:
-      db: {condition: service_healthy}
 
   api:
     <<: *platform
@@ -108,11 +112,11 @@ services:
       init-db: {condition: service_completed_successfully}
 
 secrets:
-  database_password: {file: ../secrets/database_password}
-  database_url: {file: ../secrets/database_url}
-  encryption_key: {file: ../secrets/encryption_key}
-  monitor_token: {file: ../secrets/monitor_token}
-  admin_password: {file: ../secrets/admin_password}
+  database_password: {file: "${WB_DATABASE_PASSWORD_SECRET_FILE:-../secrets/database_password}"}
+  database_url: {file: "${WB_DATABASE_URL_SECRET_FILE:-../secrets/database_url}"}
+  encryption_key: {file: "${WB_ENCRYPTION_KEY_SECRET_FILE:-../secrets/encryption_key}"}
+  monitor_token: {file: "${WB_MONITOR_TOKEN_SECRET_FILE:-../secrets/monitor_token}"}
+  admin_password: {file: "${WB_ADMIN_PASSWORD_SECRET_FILE:-../secrets/admin_password}"}
 
 volumes:
   database_data: {}

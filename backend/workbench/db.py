@@ -7,8 +7,18 @@ from .models import Base, Gate, Node, NodeConfigState, NodeProjectGrant
 def database(settings):
     if settings.database_url.startswith("sqlite"):
         settings.data_dir.mkdir(parents=True, exist_ok=True)
-    engine = create_engine(settings.database_url, pool_pre_ping=True,
-                           connect_args={"check_same_thread": False} if settings.database_url.startswith("sqlite") else {})
+    sqlite = settings.database_url.startswith("sqlite")
+    engine_options = {
+        "pool_pre_ping": True,
+        "connect_args": {"check_same_thread": False} if sqlite else {},
+    }
+    if not sqlite:
+        engine_options.update(
+            pool_size=settings.database_pool_size,
+            max_overflow=settings.database_max_overflow,
+            pool_timeout=settings.database_pool_timeout_seconds,
+        )
+    engine = create_engine(settings.database_url, **engine_options)
     if engine.dialect.name == "sqlite":
         @event.listens_for(engine, "connect")
         def sqlite_setup(connection, _):
