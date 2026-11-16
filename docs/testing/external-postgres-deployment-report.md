@@ -25,7 +25,9 @@
 | 前端格式/构建 | `npm run format:check`；`npm run build` | 均退出0；100模块构建成功 |
 | Python静态/编译 | `.venv/Scripts/python.exe -m ruff check backend agent integrations deploy tests`；`compileall` | 均退出0；Ruff All checks passed |
 | 两种Compose | 开发env基础Compose；生产env叠加external-db和shared-nginx | 均退出0；外部模式活动服务无db |
-| 最终镜像 | `automation-workbench:external-pg-test` | 构建退出0；仅用于本机验证，不是发布镜像 |
+| 隔离测试镜像 | `automation-workbench:external-pg-test` | 构建退出0；仅用于本机外部PG验证 |
+| 发布候选镜像 | `automation-workbench:0.6.0-rc.2` | 构建退出0；OCI version/revision与tag提交一致；镜像ID`sha256:878b2a…2868` |
+| 离线包 | `runtime/releases/v0.6.0-rc.2/automation-workbench_0.6.0-rc.2.tar` | 72,007,680字节；SHA-256 `3aadfb85…5ba3`；docker load后镜像ID不变 |
 | Docker外部库冒烟 | PostgreSQL 17独立管理员、低权限应用角色、外部DB网络、入口网络、生产模式 | init-db退出0；API健康、Worker运行；ready/page均200；公共schema 29表；日志无异常 |
 | 权限反向验证 | 应用角色连接自己的库；再连接管理库 | 自有库退出0；管理库退出2（拒绝）；角色非superuser/createdb/createrole，连接上限25 |
 | 清理 | 按明确项目标签和测试前缀删除容器、网络、卷及合成秘密 | 已完成；未触碰其他Docker项目 |
@@ -40,7 +42,7 @@
 - P2：真实共享Nginx配置检查、平滑重载、新路径和原`/data-service/health/ready`回归未执行。
 - P2：真实管理员尚未创建工作台库/用户，也未验证工作台账号无法连接现有生产库；本地合成权限验证不能替代服务器验收。
 - P2：共享数据库的项目级备份、平台卷同恢复点和隔离恢复演练未执行；当前内置操作工具明确不支持外部库。
-- P2：发布镜像的漏洞扫描仍受Docker账号未登录阻塞；测试镜像不能直接发布。
+- P2：发布镜像的Docker Scout漏洞扫描因Docker账号未登录而退出1，尚未完成；不得据此批准发布。
 - P3：测试依赖有2条既有弃用警告，未影响本次结果。
 
 ## 质量状态
@@ -56,6 +58,6 @@
 | CI通过 | 未执行 |
 | 开发最终确认 | 未确认 |
 | 人工代码评审通过 | 未执行 |
-| 允许发布 | 否；需形成固定提交和正式镜像后，再完成服务器部署前门禁 |
+| 允许发布 | 否；固定提交、tag和离线镜像已形成，仍需完成服务器部署前门禁 |
 
 AI自检结论：**有条件通过**。本地核心路径无P0/P1，测试证据完整；真实服务器共同故障域、权限和恢复门禁尚未完成。Codex自检通过不等于开发自测确认、人工代码评审、CI验证或发布审批通过。
