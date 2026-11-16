@@ -345,7 +345,7 @@ it('登记后可下载一键接入包且不会重复签发节点', async () => {
       )
     }
     return Promise.resolve(
-      new Response(new Blob(['synthetic-zip']), {
+      new Response('synthetic-zip', {
         status: created ? 200 : 401,
         headers: { 'Content-Type': 'application/zip' },
       }),

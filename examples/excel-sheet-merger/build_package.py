@@ -71,7 +71,8 @@ def main() -> None:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--dependency-python", type=Path, required=True)
     options = parser.parse_args()
-    build(options.output.resolve(), options.dependency_python.resolve())
+    # Linux 虚拟环境的 python 通常是符号链接；resolve 会越过虚拟环境并丢失其依赖。
+    build(options.output.resolve(), options.dependency_python.expanduser().absolute())
     print(f"程序包已生成：{options.output.resolve()}")
 
 
