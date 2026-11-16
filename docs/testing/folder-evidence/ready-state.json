@@ -1,0 +1,11 @@
+{
+  "node_online": true,
+  "test_schedules_disabled": 2,
+  "test_callers_disabled": 1,
+  "tasks": [
+    "Python 等待与取消",
+    "Python 主动失败",
+    "Node.js 目录统计",
+    "Python CSV 合并"
+  ]
+}

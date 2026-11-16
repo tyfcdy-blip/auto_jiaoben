@@ -1,0 +1,36 @@
+{
+  "name": "automation-workbench-ui",
+  "version": "0.6.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "vue-tsc --noEmit && vite build",
+    "test": "vitest run",
+    "test:e2e": "node e2e/smoke.mjs",
+    "test:e2e:notifications": "node e2e/notifications.mjs",
+    "preview": "vite preview --host 127.0.0.1",
+    "format:check": "prettier --check src tests vite.config.ts"
+  },
+  "dependencies": {
+    "vue": "3.5.42",
+    "vue-router": "4.6.4"
+  },
+  "devDependencies": {
+    "@types/node": "24.10.0",
+    "@vitejs/plugin-vue": "6.0.9",
+    "@vue/test-utils": "2.4.11",
+    "jsdom": "31.0.1",
+    "playwright": "1.63.0",
+    "prettier": "3.9.7",
+    "typescript": "5.9.3",
+    "vite": "8.3.8",
+    "vitest": "5.1.0",
+    "vue-tsc": "3.3.11"
+  },
+  "overrides": {
+    "source-map-js": "1.2.2",
+    "glob": "14.0.6",
+    "minimatch": "11.0.8"
+  }
+}

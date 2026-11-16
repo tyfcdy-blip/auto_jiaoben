@@ -1,0 +1,24 @@
+{
+  "date": "2026-09-17T05:51:36.289Z",
+  "browser": "149.0.7827.55",
+  "source_acceptance": "runtime\\folder-acceptance\\docker-01\\acceptance.json",
+  "project_id": "316e7035-62fe-4d53-b5df-797e6adb528d",
+  "checks": [
+    "真实登录并选择已通过原生验收的合成目录项目",
+    "目录任务列表显示电脑文件夹标签，普通运行表单无需上传",
+    "真实UI带目录和新批次受理，参数保留且没有input_batch_id",
+    "UI取消本次未执行队列，避免留下额外待运行任务",
+    "目录定时计划保存完整批次日期模板，保持关闭且无平台批次来源",
+    "程序导入普通目录模式可切换且保留业务Schema，未额外登记程序",
+    "电脑接入提供可选根目录普通控件，表单检查不签发或下载凭据"
+  ],
+  "passed": 7,
+  "failed": 0,
+  "error": null,
+  "console_errors": [],
+  "console_warnings": [],
+  "api_errors": [],
+  "created_run_id": "88307e3a-3edf-4ce3-9f9a-c6fce2626a8e",
+  "created_schedule_id": "8839bb86-78e9-420e-8806-1f27f37d826c",
+  "scope": "真实本机浏览器与隔离后端；手动运行只验证受理后取消，目录执行结果见原生验收；计划保持关闭；程序与根目录只检查表单，不签发凭据"
+}

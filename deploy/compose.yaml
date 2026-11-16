@@ -1,0 +1,122 @@
+name: ${WB_COMPOSE_PROJECT:-automation-workbench-dev}
+
+x-platform: &platform
+  image: ${WB_IMAGE:-automation-workbench:dev}
+  build:
+    context: ..
+    dockerfile: Dockerfile
+    args:
+      NODE_IMAGE: ${WB_NODE_IMAGE:-node:22-bookworm-slim}
+      PYTHON_IMAGE: ${WB_PYTHON_IMAGE:-python:3.12-slim-bookworm}
+      VITE_BASE_PATH: ${WB_BASE_PATH:-}/
+      RELEASE_VERSION: ${WB_RELEASE_VERSION:-dev}
+      VCS_REF: ${WB_VCS_REF:-unknown}
+  user: "10001:10001"
+  read_only: true
+  tmpfs:
+    - /tmp:rw,noexec,nosuid,size=128m
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  init: true
+  pids_limit: 128
+  mem_limit: 768m
+  cpus: 1.0
+  stop_grace_period: 45s
+  environment: &platform-environment
+    WB_ENV: ${WB_ENV:-development}
+    WB_DATABASE_URL_FILE: /run/secrets/database_url
+    WB_SECRET_KEY_FILE: /run/secrets/encryption_key
+    WB_MONITOR_TOKEN_FILE: /run/secrets/monitor_token
+    WB_DATA_DIR: /app/data
+    WB_BASE_PATH: ${WB_BASE_PATH:-}
+    WB_PUBLIC_BASE_URL: ${WB_PUBLIC_BASE_URL:-}
+    WB_DISPATCH_ENABLED: ${WB_DISPATCH_ENABLED:-true}
+    WB_MAX_UPLOAD_BYTES: ${WB_MAX_UPLOAD_BYTES:-52428800}
+    WB_MAX_BATCH_FILES: ${WB_MAX_BATCH_FILES:-200}
+    WB_MAX_BATCH_BYTES: ${WB_MAX_BATCH_BYTES:-524288000}
+    WB_MAX_PROJECT_INPUT_BYTES: ${WB_MAX_PROJECT_INPUT_BYTES:-10737418240}
+    WB_MAX_PROJECT_OPEN_BATCHES: ${WB_MAX_PROJECT_OPEN_BATCHES:-200}
+    WB_MAX_PROJECT_PROGRAM_BYTES: ${WB_MAX_PROJECT_PROGRAM_BYTES:-5368709120}
+  secrets: [database_url, encryption_key, monitor_token]
+  volumes: [platform_data:/app/data]
+  networks: [workbench]
+  logging: &logging
+    driver: json-file
+    options:
+      max-size: 10m
+      max-file: "3"
+
+services:
+  db:
+    image: ${WB_POSTGRES_IMAGE:-postgres:17-bookworm}
+    environment:
+      POSTGRES_DB: workbench
+      POSTGRES_USER: workbench
+      POSTGRES_PASSWORD_FILE: /run/secrets/database_password
+      PGDATA: /var/lib/postgresql/data/pgdata
+    secrets: [database_password]
+    volumes: [database_data:/var/lib/postgresql/data]
+    networks: [workbench]
+    restart: unless-stopped
+    shm_size: 128m
+    mem_limit: 768m
+    cpus: 1.0
+    logging: *logging
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U workbench -d workbench"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    stop_grace_period: 60s
+
+  init-db:
+    <<: *platform
+    command: [python, -m, workbench.cli, init-db]
+    restart: "no"
+    healthcheck: {disable: true}
+    depends_on:
+      db: {condition: service_healthy}
+
+  api:
+    <<: *platform
+    ports: ["${WB_BIND_ADDRESS:-127.0.0.1}:${WB_PORT:-18080}:8000"]
+    restart: unless-stopped
+    depends_on:
+      init-db: {condition: service_completed_successfully}
+
+  worker:
+    <<: *platform
+    command: [python, -m, workbench.worker]
+    restart: unless-stopped
+    healthcheck: {disable: true}
+    depends_on:
+      init-db: {condition: service_completed_successfully}
+
+  init-admin:
+    <<: *platform
+    profiles: [admin]
+    command: [python, -m, workbench.cli, init-admin]
+    restart: "no"
+    healthcheck: {disable: true}
+    environment:
+      <<: *platform-environment
+      WB_ADMIN_USERNAME: ${WB_ADMIN_USERNAME:-admin}
+      WB_ADMIN_DISPLAY_NAME: ${WB_ADMIN_DISPLAY_NAME:-平台管理员}
+      WB_ADMIN_PASSWORD_FILE: /run/secrets/admin_password
+    secrets: [database_url, encryption_key, monitor_token, admin_password]
+    depends_on:
+      init-db: {condition: service_completed_successfully}
+
+secrets:
+  database_password: {file: ../secrets/database_password}
+  database_url: {file: ../secrets/database_url}
+  encryption_key: {file: ../secrets/encryption_key}
+  monitor_token: {file: ../secrets/monitor_token}
+  admin_password: {file: ../secrets/admin_password}
+
+volumes:
+  database_data: {}
+  platform_data: {}
+
+networks:
+  workbench: {}

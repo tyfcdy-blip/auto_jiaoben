@@ -1,0 +1,35 @@
+# 本地凭据与机器配置；示例配置可以纳入版本管理。
+.env
+.env.*
+!.env.example
+!.env.*.example
+*.local.json
+*.local.yaml
+*.local.yml
+/secrets/
+
+# 运行数据、业务输入输出、日志与备份不进入代码仓库。
+/runtime/
+/data/
+/uploads/
+/outputs/
+/logs/
+/backups/
+
+# 本地运行环境和缓存。
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+node_modules/
+.pytest_cache/
+.DS_Store
+Thumbs.db
+
+# 可重建的构建和测试产物。
+frontend/dist/
+frontend/e2e-results/
+frontend/e2e-folder-results/
+.coverage
+htmlcov/
+.ruff_cache/

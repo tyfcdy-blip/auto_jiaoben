@@ -1,0 +1,20 @@
+{
+  "date": "2026-09-16",
+  "environment": "Windows/Python3.12/PostgreSQL17.11; isolated schemas and synthetic input",
+  "command": "python -m pytest tests -q --junitxml=runtime/verification/final-python.xml",
+  "exit_code": 0,
+  "passed": 198,
+  "failed": 0,
+  "skipped": 0,
+  "groups": {
+    "agent": 64,
+    "backend": 51,
+    "deployment": 24,
+    "integration": 6,
+    "monitor": 29,
+    "nine": 17,
+    "review": 7
+  },
+  "duration_seconds": 88.31,
+  "warnings": 2
+}

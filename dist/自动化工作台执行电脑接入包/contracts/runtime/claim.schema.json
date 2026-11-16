@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object", "additionalProperties": false,
+  "required": ["run_id", "attempt_id", "protocol_version", "command", "bundle_sha256", "bundle_url", "parameters", "operation", "timeout_seconds", "side_effects", "result_required", "input_files", "resource_keys"],
+  "properties": {
+    "run_id": {"type": "string", "pattern": "^[a-zA-Z0-9_-]{1,128}$"},
+    "attempt_id": {"type": "string", "pattern": "^[a-zA-Z0-9_-]{1,128}$"},
+    "protocol_version": {"const": "1"},
+    "command": {"type": "array", "minItems": 2, "maxItems": 100, "items": {"type": "string", "minLength": 1, "maxLength": 4096}},
+    "bundle_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "bundle_url": {"type": "string", "maxLength": 2048},
+    "parameters": {"type": "object"}, "operation": {"type": "string", "minLength": 1, "maxLength": 100},
+    "input_directory": {"type": "string", "minLength": 1, "maxLength": 4096},
+    "timeout_seconds": {"type": "integer", "minimum": 1, "maximum": 86400},
+    "side_effects": {"type": "boolean"}, "result_required": {"type": "boolean"},
+    "resource_keys": {"type": "array", "maxItems": 100, "items": {"type": "string"}},
+    "input_files": {"type": "array", "maxItems": 1000, "items": {"type": "object", "additionalProperties": false,
+      "required": ["name", "sha256", "url"], "properties": {
+        "name": {"type": "string", "maxLength": 240}, "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}, "url": {"type": "string", "maxLength": 2048}
+      }
+    }}
+  }
+}

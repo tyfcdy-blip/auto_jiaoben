@@ -1,0 +1,12 @@
+{
+  "base_url": "https://workbench.example.invalid",
+  "token_file": "node-token.txt",
+  "state_dir": "runtime-state",
+  "runtimes": {"python": "C:/Python312/python.exe"},
+  "capabilities": ["python"],
+  "input_roots": [],
+  "isolation": "development",
+  "poll_seconds": 2,
+  "heartbeat_seconds": 15,
+  "request_timeout": 5
+}

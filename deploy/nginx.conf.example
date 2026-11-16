@@ -1,0 +1,16 @@
+# 合并前由运维分配域名/证书；只在已配置 HTTPS 的 server 块中追加此片段。
+# 必须与 WB_BASE_PATH=/automation 一致。保留完整子路径，不做 rewrite。
+location = /automation {
+    return 308 /automation/;
+}
+location /automation/ {
+    proxy_pass http://127.0.0.1:18080;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_read_timeout 65s;
+    proxy_send_timeout 65s;
+    client_max_body_size 100m;
+    add_header X-Content-Type-Options nosniff always;
+}

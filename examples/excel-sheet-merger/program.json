@@ -1,0 +1,21 @@
+{
+  "name": "Excel单页签合并为多页签",
+  "description": "读取执行电脑文件夹中的多个单页签.xlsx，按文件名生成页签并输出一个多页签工作簿。",
+  "command": ["python", "main.py"],
+  "side_effects": false,
+  "result_required": true,
+  "required_capabilities": ["python", "directory-input-v1"],
+  "protocol_version": "1",
+  "suggested_timeout_seconds": 300,
+  "parameter_schema": {
+    "type": "object",
+    "x-workbench-input": "directory",
+    "properties": {
+      "input_dir": {"type": "string", "minLength": 1, "maxLength": 2000},
+      "batch_key": {"type": "string", "minLength": 1, "maxLength": 180}
+    },
+    "required": ["input_dir", "batch_key"],
+    "additionalProperties": false
+  },
+  "example_parameters": {}
+}

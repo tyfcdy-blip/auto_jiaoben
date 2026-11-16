@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object", "additionalProperties": false,
+  "required": ["protocol_version", "run_id", "attempt_id", "status", "summary"],
+  "properties": {
+    "protocol_version": {"const": "1"},
+    "run_id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "attempt_id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "status": {"enum": ["success", "failed", "partial", "unknown", "canceled"]},
+    "summary": {"type": "string", "maxLength": 2000},
+    "notification_text": {"type": "string", "minLength": 1, "maxLength": 2000, "pattern": "\\S"},
+    "metrics": {"type": "object", "maxProperties": 100},
+    "artifacts": {"type": "array", "maxItems": 100, "items": {
+      "type": "object", "additionalProperties": false, "required": ["name", "required"],
+      "properties": {"name": {"type": "string", "minLength": 1, "maxLength": 240}, "required": {"type": "boolean"}}
+    }}
+  }
+}

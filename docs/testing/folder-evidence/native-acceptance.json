@@ -1,0 +1,39 @@
+{
+  "url": "http://127.0.0.1:2108",
+  "project_name": "文件夹输入验收-57b5366b",
+  "checks": [
+    "Python递归目录CSV合并及真实产物下载",
+    "影刀式事件携带目录参数，重复请求不重复执行",
+    "Node.js读取同一目录并统计四个文件",
+    "主动报错、非零退出和日志回传",
+    "真实进程超时终止并回传失败状态",
+    "目录missing在业务程序启动前被拒绝",
+    "目录empty在业务程序启动前被拒绝",
+    "目录outside在业务程序启动前被拒绝",
+    "失败和超时生成工作台告警，不发送真实钉钉",
+    "真实时钟定时触发目录任务，业务日期参数解析成功",
+    "所有处理完成后，原始输入文件内容保持不变"
+  ],
+  "tasks": {
+    "csv-merge": "688780d0-8f2f-446e-9d8e-440908ed4306",
+    "node-summary": "f5c5589a-3cd2-4833-972c-1b8d538b86a4",
+    "fail": "416265d3-51d2-4f6c-ac81-8a19e08da1ad",
+    "wait": "c4cae7a9-161f-4adb-84d5-9dd4dd4260ae"
+  },
+  "runs": {
+    "csv": "1ff649ae-c424-4a84-9cae-d8cc4bcbbdfb",
+    "node": "ea33fed1-a312-4837-97de-cfc6af1c5422",
+    "fail": "9e4a3f3d-c478-4041-a0b6-1209d9c24fef",
+    "timeout": "c9ef183b-8665-4bb7-b39a-6a014262b2cf",
+    "missing": "6a5ee5c6-8eda-47ca-a352-55c092ac4810",
+    "empty": "0997b376-ac88-411b-8531-1cb3e2c0cf17",
+    "outside": "7cea89df-b05e-4f3a-8fb1-2ec2a9699e55",
+    "schedule": "c59042da-51c2-4889-b405-2e5063e00b13"
+  },
+  "project_id": "c9a30a89-a9e1-4f5a-92d1-05c4f20067d5",
+  "agent_config": "D:\\codex\\自动化脚本程序控制台\\runtime\\folder-acceptance\\native-02\\connection\\agent.json",
+  "input_dir": "D:\\codex\\自动化脚本程序控制台\\runtime\\folder-acceptance\\native-02\\inputs",
+  "passed": 11,
+  "failed": 0,
+  "elapsed_seconds": 49.03
+}
