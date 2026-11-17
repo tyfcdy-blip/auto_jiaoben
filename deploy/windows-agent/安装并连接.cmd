@@ -31,6 +31,6 @@ pause
 exit /b %RESULT%
 
 :success
-echo 执行电脑已接入，可回到工作台刷新在线状态。
+echo 安装步骤完成，请按上方提示检查是否需要重新登录Windows。
 pause
 exit /b 0

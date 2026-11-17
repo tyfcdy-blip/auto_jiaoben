@@ -11,6 +11,8 @@ from .input_sources import (DIRECTORY_CAPABILITY, roots_are_subset, uses_directo
                             validate_directory_run)
 from .node_config import CONFIG_CAPABILITY, active_grants, configuration_ready, grant_for
 from .retention import batch_has_expired_files
+from .node_files import task_options, validate_options, run_file_payload, file_fields
+from .models import RunFileOptions
 
 ACTIVE = {"leased", "running", "cancel_requested", "unknown"}
 TERMINAL = {"succeeded", "failed", "partial", "canceled"}
@@ -89,6 +91,10 @@ def queued_run_reason(db, settings, run, cache: dict | None = None) -> dict | No
         authorization_cache[authorization_key] = still_authorized(db, run)
     if not authorization_cache[authorization_key]:
         return {"code": "authorization_expired", "message": "触发身份已失效或不再具有运行权限"}
+    try:
+        run_file_payload(db, run)
+    except Problem as problem:
+        return {"code": problem.code, "message": problem.message}
     candidate_key = (run.project_id, task.node_id)
     candidate_cache = cache.setdefault("candidates", {})
     if candidate_key not in candidate_cache:
@@ -181,10 +187,12 @@ def trigger_authorized(db, who, task):
         raise Problem(403, "forbidden", "节点身份不能触发任务")
 
 
-def admit(db, settings, task, actor, event_id, parameters, batch_id, source, expected_input_label=None):
+def admit(db, settings, task, actor, event_id, parameters, batch_id, source, expected_input_label=None,
+          file_options=None):
     try:
         request_hash = content_hash({"task_id": task.id, "parameters": parameters, "batch_id": batch_id,
-                                     "expected_input_label": expected_input_label})
+                                     "expected_input_label": expected_input_label,
+                                     **({"file_options": file_options} if file_options is not None else {})})
     except (ValueError, TypeError):
         raise Problem(422, "invalid_parameters", "参数必须是标准 JSON，不能包含非有限数字") from None
     event = db.scalar(select(TriggerEvent).where(TriggerEvent.actor == actor, TriggerEvent.event_id == event_id))
@@ -200,6 +208,22 @@ def admit(db, settings, task, actor, event_id, parameters, batch_id, source, exp
     if version.side_effects and not settings.allow_side_effects:
         raise Problem(409, "side_effects_disabled", "外部写入尚未通过授权门禁")
     resolved = {**task.default_parameters, **parameters}
+    defaults_files = task_options(db, task.id)
+    selected = defaults_files if file_options is None else file_options
+    if file_options is not None:
+        # 本次选择是完整覆盖；清除选择不能又从任务默认参数悄悄恢复旧文件路径。
+        for name in defaults_files["inputs"]:
+            resolved.pop(name, None)
+    declared_files = file_fields(version.parameter_schema)
+    selections = dict(selected.get("inputs", {}))
+    if file_options is None:
+        selections.update({name: parameters[name] for name in declared_files if name in parameters})
+    resolved.update(selections)
+    # 外部系统可直接传普通业务参数；带文件注解的值仍必须经过同一授权边界。
+    selections.update({name: resolved[name] for name in declared_files if name in resolved})
+    selected = {"inputs": selections, "output_dir": selected.get("output_dir")}
+    selected, file_revision, output_revision = validate_options(db, task, selected)
+    resolved.update(selected["inputs"])
     validate_parameters(version.parameter_schema, resolved)
     validate_directory_run(version.parameter_schema, task, resolved, batch_id, expected_input_label)
     if uses_directory(version.parameter_schema):
@@ -238,6 +262,11 @@ def admit(db, settings, task, actor, event_id, parameters, batch_id, source, exp
     if existing and (existing.parameters != resolved or existing.version_id != version.id):
         raise Problem(409, "business_conflict", "业务批次已受理，参数或版本不同，需要核对或修订批次")
     if existing:
+        previous_files = db.get(RunFileOptions, existing.id)
+        previous_options = previous_files.options if previous_files else {"inputs": {}, "output_dir": None}
+        if previous_options != selected:
+            raise Problem(409, "business_conflict", "业务批次已受理，输入或结果目录不同，需要核对批次")
+    if existing:
         run = existing
     else:
         queued = db.scalar(select(func.count()).select_from(Run).where(Run.state.in_(["queued", "waiting_input"])))
@@ -249,6 +278,10 @@ def admit(db, settings, task, actor, event_id, parameters, batch_id, source, exp
                   state="waiting_input" if (batch and not batch.ready) or (expected_input_label and not batch) else "queued")
         db.add(run)
         db.flush()
+        if selected["inputs"] or selected["output_dir"]:
+            db.add(RunFileOptions(run_id=run.id, node_id=task.node_id, options=selected,
+                                 config_revision=file_revision, output_config_revision=output_revision,
+                                 save_state="pending" if selected["output_dir"] else "not_requested"))
     db.add(TriggerEvent(actor=actor, event_id=event_id, request_hash=request_hash, run_id=run.id))
     db.flush()
     return run, bool(existing)
@@ -330,6 +363,10 @@ def node_grant_authorized(db, node_id: str, project_id: str) -> bool:
 
 
 def node_run_grant_authorized(db, node_id: str, run) -> bool:
+    try:
+        run_file_payload(db, run)
+    except Problem:
+        return False
     grant = grant_for(db, node_id, run.project_id)
     if not grant:
         return False
@@ -359,6 +396,12 @@ def claim(db, settings, node):
             task, version = db.get(Task, run.task_id), db.get(Version, run.version_id)
             if not task.enabled or not version.published or not still_authorized(db, run):
                 fail_without_start(db, run, "启动前授权或任务状态已失效")
+                continue
+            try:
+                files = run_file_payload(db, run)
+                if files and db.get(RunFileOptions, run.id).node_id != node.id:
+                    continue
+            except Problem:
                 continue
             directory = uses_directory(version.parameter_schema)
             if directory and (DIRECTORY_CAPABILITY not in node.capabilities or not managed or not grant.input_roots):

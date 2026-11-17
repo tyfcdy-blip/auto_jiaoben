@@ -9,6 +9,7 @@ import stat
 
 from .config import AgentError
 from .storage import safe_name
+from .filesystem_guard import GuardedDirectory
 
 
 CAPABILITY = "directory-input-v1"
@@ -18,7 +19,10 @@ MAX_DEPTH = 32
 
 
 def _regular_status(path: Path, *, directory: bool) -> os.stat_result:
-    observed = path.lstat()
+    return _validated_status(path.lstat(), directory=directory)
+
+
+def _validated_status(observed: os.stat_result, *, directory: bool) -> os.stat_result:
     if stat.S_ISLNK(observed.st_mode) or getattr(observed, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT:
         raise AgentError("目录输入不允许符号链接或重解析点")
     if directory:
@@ -84,9 +88,7 @@ def _signature(observed: os.stat_result, *, handle: bool = False) -> tuple:
 
 
 def _hash_file(path: Path, before: os.stat_result, progress: Callable[[], None]) -> str:
-    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
-    descriptor = os.open(path, flags)
-    with os.fdopen(descriptor, "rb") as stream:
+    with GuardedDirectory(path.parent) as guarded, guarded.open_file(path.name) as stream:
         if _signature(os.fstat(stream.fileno()), handle=True) != _signature(before, handle=True):
             raise AgentError("目录输入在打开文件时发生变动")
         digest, count = hashlib.sha256(), 0
@@ -138,7 +140,7 @@ def directory_manifest(value: str, roots: list[str], byte_limit: int,
         directories[directory] = _regular_status(directory, directory=True)
         directory_entries[directory] = set()
         # scandir 迭代而不是先加载整个目录；空子目录也受数量限制。
-        with os.scandir(directory) as entries:
+        with GuardedDirectory(directory) as guarded, guarded.scan() as entries:
             for entry in entries:
                 directory_entries[directory].add(entry.name)
                 path = directory / entry.name
@@ -173,7 +175,7 @@ def directory_manifest(value: str, roots: list[str], byte_limit: int,
         if _signature(_regular_status(path, directory=True)) != _signature(observed):
             raise AgentError("输入目录清单在读取期间发生变动")
         current_entries: set[str] = set()
-        with os.scandir(path) as entries:
+        with GuardedDirectory(path) as guarded, guarded.scan() as entries:
             for entry in entries:
                 current_entries.add(entry.name)
                 if len(current_entries) > len(directory_entries[path]):

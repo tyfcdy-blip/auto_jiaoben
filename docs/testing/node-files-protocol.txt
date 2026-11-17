@@ -1,0 +1,65 @@
+节点文件能力协议 v1（2026-11-17，本地实现与测试）
+统一前缀 /api/v1；base_path 如 /automation 由既有客户端处理。
+capability: node-files-v1。旧 Agent 无此能力时新功能返回 409，既有任务不变。
+
+1. 独立写授权（不改变既有 node-config-v1 hash）
+GET /nodes/{node_id}/file-configuration?project_id=... 返回
+{revision,applied_revision,apply_status,output_roots,allowed_input_roots,allowed_output_roots,grants:[{project_id,output_roots}]}。
+全局 output_roots/grants 仅返回给平台管理员；普通项目管理员和其他用户只能看到其有权项目的allowed_input_roots/allowed_output_roots，不能查看其他项目授权。
+PUT /nodes/{node_id}/file-configuration 请求 {base_revision,output_roots:[绝对路径],grants:[{project_id,output_roots:[绝对路径]}]}。
+PUT仅平台管理员可用；锁内重新检查平台管理员身份，禁止项目管理员扩张电脑级文件访问权限。
+修改前电脑必须处于维护状态，且没有leased/running/cancel_requested/unknown运行；与既有输入目录配置的停机边界一致。
+GET /agent/file-configuration 返回 {revision,output_roots,config_hash}，未配置返回 204。
+POST /agent/file-configuration/ack 请求 {revision,config_hash,status:"applied"|"failed",error:""}，返回 {accepted:true}。
+hash = SHA256(JSON sort_keys=true,separators=(',',':'),ensure_ascii=false of {revision,output_roots})。
+
+2. 授权目录浏览（仅元数据，不传输文件内容）
+POST /nodes/{node_id}/file-requests 请求 {project_id,purpose:"input"|"output",path:绝对目录路径,limit:200}，返回 202 {id,state:"pending",expires_at}。
+GET /nodes/{node_id}/file-requests/{id} 返回 {id,state:"pending"|"leased"|"succeeded"|"failed"|"expired",expires_at,path,entries:[{name,path,kind:"file"|"directory",size:数字或null}],truncated:false,error:""}。
+POST /agent/file-requests/claim 无请求体。无请求 204；否则返回
+{id,project_id,purpose,path,limit,expires_at,config_revision,output_config_revision,allowed_roots:[绝对目录路径]}。
+POST /agent/file-requests/{id}/complete 请求
+{config_revision,output_config_revision,entries:[{name,path,kind,size}],truncated:false,error:""}。
+返回 {accepted:true}，同内容重复幂等，冲突409，过期410，撤权403。
+请求有效60秒，项目最多10个未结束请求。Agent只能列当前目录直接子项，拒绝符号链接/reparse point越界。
+input根来自现有NodeProjectGrant；output根来自独立写授权。input以现有配置applied_revision校验；output同时校验独立配置。
+
+3. 任务文件设置（固定执行电脑，业务parameters保持原协议）
+GET/PUT /tasks/{task_id}/file-options
+PUT body/GET response: {inputs:{参数名:绝对路径或绝对路径数组},output_dir:绝对目录路径或null}。
+运行POST /tasks/{task_id}/runs增可选 file_options 同上；未传沿用任务设置，传对象完整覆盖本次设置（不改任务）。
+仅参数schema.properties中 x-workbench-file:"file"|"files"|"directory" 可映射；file/directory是string，files是array of string。input_dir既有目录协议继续兼容。
+inputs覆盖对应业务参数值，受理时校验并存快照，定时调用自动使用任务默认file-options。
+外部调用方直接在parameters传文件注解字段也会提取为输入映射，经过同样的固定电脑、目录授权和类型校验；未声明文件注解的旧参数不改变行为。
+显式file_options代表完整覆盖：清除选中文件时同步移除原默认文件参数，避免旧路径被重新合并；若字段必填则返回参数校验错误。
+GET /runs/{id} 与运行列表附 file_status:
+{enabled:true,inputs:{...},output_dir:null|string,save_state:"not_requested"|"pending"|"succeeded"|"failed",saved_files:[{name,path}],save_error:""}；未启用时null。
+
+4. 下发与本机保存
+有文件设置的claim附 node_files:
+{config_revision,output_config_revision,allowed_input_roots,allowed_output_roots,inputs:{参数名:路径或路径数组},output_dir:null|string}。
+Agent运行前重新验证配置、真实路径与读写授权；inputs注入context.parameters（服务端已注入）并追加context.input_manifest本机输入项，directory不展开无限文件。
+output_dir是保存父目录；Agent只把result.json中声明产物复制到output_dir/run_id/name，创建独立目录，不覆盖，不导出未声明文件，平台上传保持。
+独立保存状态不影响脚本完成状态；POST /agent/runs/{run_id}/file-save 请求
+{attempt_id,status:"succeeded"|"failed",files:[{name,path}],error:""}，返回{accepted:true}，同内容重复幂等、冲突409。
+保存结果须在运行完成回传之前发送；Agent本地复制失败也必须发送failed，不得因此跳过既有complete与平台归档。
+旧的completion严格字段不变。
+
+最终补充（实现冻结）：
+所有expires_at使用Unix秒（float），不是ISO字符串。
+浏览创建与claim增offset（默认0，上限10000），complete与轮询增next_offset:int|null；非空时必须等于offset+entries.length且truncated=true。
+目录扫描有界，超大目录明确失败；不能为了分页无限扫描。每页最多200项。
+TaskCreate/TaskUpdate增加可选file_options，原子保存；独立GET/PUT file-options保留。
+claim.node_files增加必填input_kinds:{参数名:file|files|directory}，由服务器从版本schema推导；Agent按真实类型验证。
+POST /runs/{id}/file-save/retry，仅operator及以上可调用，失败另存最多重试10次，每次300秒；不重跑脚本。
+POST /agent/file-save-retries/claim 无body，无任务204，有任务{run_id,attempt_id,retry_number,node_files}。
+file-save请求增加retry_number默认0；相同号幂等，旧号409。首次output_dir/run_id；重试N另存到output_dir/run_id/retry-N，不覆盖既有文件。
+GET /nodes/{id}返回Node+online/dispatch_status/dispatch_detail/config_revision/applied_revision/config_status以及projects:[{project_id,name,enabled}]（仅当前用户有权项目）。
+GET /tasks、GET /runs支持node_id筛选。
+专用GET /tasks/{id}/file-options返回base_config_hash；专用PUT必须带base_config_hash，防止旧页面覆盖新设置。任务整体config_hash已包含文件设置。未结束运行或启用计划存在时禁止修改文件设置。
+结果保存失败且files=[]的owned-run回报允许在目录撤权后送达，只更新状态不授予文件访问权；成功或带文件路径的回报仍严格重验授权。
+浏览请求不存文件内容；每次创建请求时有界清理本电脑过期超过24小时的元数据最多100条，保留独立审计事件，不删除其他电脑记录、任务/运行配置或真实文件。
+
+数据库迁移与回滚：新增node_file_config/node_file_requests/task_file_options/run_file_options四表，不改旧表字段，不提升system_gate.schema_version。
+部署前注入独立隔离测试数据库环境后执行：python -m workbench.node_files_migration check（只读，缺表非0退出）；python -m workbench.node_files_migration apply（幂等追加，保持既有init-db兼容）；再次check。
+本次只在隔离测试库验证，未连接生产。生产维护窗口另行批准。回滚时恢复旧镜像，暂停新文件任务；保留四表，禁止DROP表以免丢失审计和运行快照。旧程序不会读取新表；新能力请求不兼容旧Agent必须升级Agent后启用。

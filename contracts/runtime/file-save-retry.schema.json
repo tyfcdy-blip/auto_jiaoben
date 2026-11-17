@@ -1,0 +1,11 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "type":"object","additionalProperties":false,
+  "required":["run_id","attempt_id","retry_number","node_files"],
+  "properties":{
+    "run_id":{"type":"string","pattern":"^[a-zA-Z0-9_-]{1,128}$"},
+    "attempt_id":{"type":"string","pattern":"^[a-zA-Z0-9_-]{1,128}$"},
+    "retry_number":{"type":"integer","minimum":1,"maximum":1000},
+    "node_files":{"type":"object"}
+  }
+}

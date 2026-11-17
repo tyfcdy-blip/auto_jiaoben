@@ -1,0 +1,13 @@
+浏览器示例使用 Microsoft Playwright Python 1.58.0（Apache-2.0）。
+来源：https://github.com/microsoft/playwright-python
+文档：https://playwright.dev/python/docs/browsers
+程序 ZIP 不打包 Playwright、浏览器或第三方二进制；依赖需安装到执行电脑指定 Python 环境。
+Microsoft Edge 按其自身许可使用。本机文件示例仅使用 Python 标准库。
+
+独立运行环境中固定依赖（许可依据已安装包 metadata）：
+- playwright 1.58.0：Apache-2.0；https://github.com/microsoft/playwright-python
+- pyee 13.0.1：MIT；https://github.com/jfhbrook/pyee
+- greenlet 3.5.6：MIT AND PSF-2.0；https://github.com/python-greenlet/greenlet
+- typing_extensions 4.16.0：PSF-2.0；https://github.com/python/typing_extensions
+
+安装依赖会按 requirements.txt 从配置的软件源获取软件包。本交付不重新分发上述库或浏览器。

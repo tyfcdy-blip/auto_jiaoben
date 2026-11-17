@@ -1,0 +1,21 @@
+{
+  "name": "Excel 文件选择与日期测试",
+  "command": ["python", "main.py"],
+  "side_effects": false,
+  "result_required": true,
+  "required_capabilities": ["python", "node-files-v1"],
+  "suggested_timeout_seconds": 90,
+  "parameter_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["sources", "report_date"],
+    "properties": {
+      "sources": {
+        "type": "array", "minItems": 1, "maxItems": 10,
+        "items": {"type": "string", "minLength": 1},
+        "title": "待统计 Excel 文件", "x-workbench-file": "files"
+      },
+      "report_date": {"type": "string", "format": "date", "title": "报表日期"}
+    }
+  }
+}

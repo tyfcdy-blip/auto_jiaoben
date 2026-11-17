@@ -12,7 +12,7 @@ import time
 import uuid
 
 
-PACKAGE_VERSION = "0.1.0"
+PACKAGE_VERSION = "0.6.1-rc.1"
 PACKAGE_ROOT = Path(__file__).resolve().parent
 NODE_PATTERN = re.compile(r"[A-Za-z0-9_-]{1,100}")
 
@@ -240,28 +240,55 @@ def start_agent(runtime: Path, wrapper: Path, install_root: Path) -> None:
 def run(options: argparse.Namespace) -> None:
     if sys.version_info[:2] != (3, 12):
         raise SetupError("安装器需要Python 3.12")
-    connection_file = options.connection.absolute() if options.connection else select_connection()
-    connection = read_connection(connection_file)
+    if options.upgrade_existing and (options.connection or options.connection_dir or options.no_autostart):
+        raise SetupError("保留绑定升级不能同时指定新连接或禁用登录启动")
+    if options.upgrade_existing:
+        matches = list((Path.home() / ".automation-workbench/connections").glob("*/agent.json"))
+        if len(matches) != 1:
+            raise SetupError("没有找到唯一的已绑定电脑配置；请管理员核对当前Windows用户下的连接目录")
+        config = matches[0].absolute()
+        if config.is_symlink() or config.stat().st_size > 65536:
+            raise SetupError("已有配置无效")
+        connection = json.loads(config.read_text(encoding="utf-8"))
+        if (not isinstance(connection, dict) or not isinstance(connection.get("base_url"), str)
+                or not isinstance(connection.get("runtimes"), dict) or not connection["runtimes"]):
+            raise SetupError("已有配置不完整")
+        connection["name"] = config.parent.name
+        connection_file = None
+    else:
+        connection_file = options.connection.absolute() if options.connection else select_connection()
+        connection = read_connection(connection_file)
     if not options.accept_config:
-        confirm_connection(connection)
+        if options.upgrade_existing:
+            print(f"保留绑定升级：{connection['base_url']}；不更改凭据、不停止当前进程。")
+            if input("确认升级此工作台执行器？输入 YES 继续：").strip() != "YES":
+                raise SetupError("未确认升级")
+        else:
+            confirm_connection(connection)
     local = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData/Local"))
-    install_root = (options.install_root or local / "AutomationWorkbench/Agent/runtime-v0.1").absolute()
-    connection_root = (options.connection_dir or Path.home() / ".automation-workbench/connections" /
-                       connection["node_id"]).absolute()
+    install_root = (options.install_root or local / f"AutomationWorkbench/Agent/runtime-v{PACKAGE_VERSION}").absolute()
+    connection_root = (config.parent if options.upgrade_existing else
+                       (options.connection_dir or Path.home() / ".automation-workbench/connections" /
+                        connection["node_id"]).absolute())
     appdata = Path(os.environ.get("APPDATA", Path.home() / "AppData/Roaming"))
     startup = (options.startup_dir or appdata / "Microsoft/Windows/Start Menu/Programs/Startup").absolute()
     runtime = prepare_runtime(install_root)
-    config = import_or_reuse(connection_file, connection, runtime, install_root, connection_root)
+    if not options.upgrade_existing:
+        config = import_or_reuse(connection_file, connection, runtime, install_root, connection_root)
     wrapper = config.parent / "run-agent-background.py"
     startup_file = None
     if not options.no_autostart:
         wrapper, startup_file = background_files(runtime, install_root, config, startup)
-    elif not wrapper.is_file():
+    else:
         wrapper, _ = background_files(runtime, install_root, config, config.parent / ".no-autostart")
         (config.parent / ".no-autostart" / f"AutomationWorkbench-{config.parent.name}.vbs").unlink(missing_ok=True)
         (config.parent / ".no-autostart").rmdir()
-    if not options.no_start:
+    if not options.no_start and not options.upgrade_existing:
         start_agent(runtime, wrapper, install_root)
+    if options.upgrade_existing:
+        print("新版已安装，原绑定、运行环境与状态均保留；旧执行器尚未被终止。")
+        print("请确认工作台无运行中/未知状态任务后，注销当前Windows用户再登录，新执行器将自动启动。")
+        return
     print("执行电脑接入完成。")
     print(f"节点配置：{config}")
     if startup_file:
@@ -272,6 +299,7 @@ def run(options: argparse.Namespace) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--connection", type=Path)
+    parser.add_argument("--upgrade-existing", action="store_true", help="保留当前用户唯一已有绑定，更新登录启动入口，不终止正在运行的进程")
     parser.add_argument("--install-root", type=Path)
     parser.add_argument("--connection-dir", type=Path)
     parser.add_argument("--startup-dir", type=Path)

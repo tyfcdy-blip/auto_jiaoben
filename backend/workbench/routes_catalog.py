@@ -218,21 +218,26 @@ def publish(version_id: str, request: Request, accept_review: bool = False,
 
 
 @router.get("/tasks")
-def tasks(project_id: str | None = None, q: str | None = Query(None, max_length=100),
+def tasks(project_id: str | None = None, q: str | None = Query(None, max_length=100), node_id: str | None = None,
           limit: int = Query(50, ge=1, le=200),
           offset: int = Query(0, ge=0), who=Depends(human), db=Depends(get_db, scope="function")):
     query = project_filter(db, who, select(Task).order_by(Task.created_at.desc()), Task, project_id)
+    if node_id:
+        query = query.where(Task.node_id == node_id)
     if q and q.strip():
         query = query.where(Task.name.contains(q.strip(), autoescape=True))
     page = listing(db, query, limit, offset)
     identifiers = {item["version_id"] for item in page["items"]}
     versions = {item.id: item for item in db.scalars(select(Version).where(Version.id.in_(identifiers))).all()} if identifiers else {}
+    from .models import TaskFileOptions
+    files = {record.task_id: record.options for record in db.scalars(select(TaskFileOptions).where(
+        TaskFileOptions.task_id.in_([item["id"] for item in page["items"]])))}
     for item in page["items"]:
         version = versions[item["version_id"]]
         item["input_mode"] = input_mode(version.parameter_schema, item["requires_input"])
         item["program_id"] = version.program_id
         item["parameter_schema"] = version.parameter_schema
-        item["config_hash"] = task_config_hash(item)
+        item["config_hash"] = task_config_hash(item, files.get(item["id"]))
     return page
 
 
@@ -241,7 +246,7 @@ def task_detail(task_id: str, who=Depends(human), db=Depends(get_db, scope="func
     task = require(db, Task, task_id)
     authorize(db, who, task.project_id)
     version = db.get(Version, task.version_id)
-    return task_view(task, version)
+    return task_view(task, version, db)
 
 
 @router.get("/task-notification-rules")
@@ -312,7 +317,7 @@ def validated_task_values(db, project_id, payload):
         raise Problem(422, "invalid_resources", "资源名称无效或重复")
     if any(field not in version.parameter_schema.get("properties", {}) for field in payload.business_key_fields):
         raise Problem(422, "invalid_business_key", "业务键必须引用已定义的参数字段")
-    values = payload.model_dump(exclude={"project_id", "base_config_hash"})
+    values = payload.model_dump(exclude={"project_id", "base_config_hash", "file_options"})
     if uses_directory(version.parameter_schema):
         if not payload.node_id or payload.requires_input:
             raise Problem(422, "invalid_directory_task", "文件夹输入需要固定执行电脑，不能同时要求平台文件批次")
@@ -329,21 +334,25 @@ def validated_task_values(db, project_id, payload):
     return values, version
 
 
-def task_config_hash(task):
+def task_config_hash(task, file_options=None):
     def value(field):
         return task[field] if isinstance(task, dict) else getattr(task, field)
 
-    return content_hash({field: value(field) for field in (
+    configuration = {field: value(field) for field in (
         "name", "version_id", "default_parameters", "node_id", "timeout_seconds",
         "resource_keys", "business_key_fields", "requires_input", "operation",
-    )})
+    )}
+    if file_options and (file_options.get("inputs") or file_options.get("output_dir")):
+        configuration["file_options"] = file_options
+    return content_hash(configuration)
 
 
-def task_view(task, version):
+def task_view(task, version, db):
+    from .node_files import task_options
     return {**public(task), "program_id": version.program_id,
             "parameter_schema": version.parameter_schema,
             "input_mode": input_mode(version.parameter_schema, task.requires_input),
-            "config_hash": task_config_hash(task)}
+            "config_hash": task_config_hash(task, task_options(db, task.id))}
 
 
 @router.post("/tasks", status_code=201)
@@ -354,8 +363,11 @@ def create_task(payload: S.TaskCreate, who=Depends(human), db=Depends(get_db, sc
     task = Task(project_id=payload.project_id, **values)
     db.add(task)
     db.flush()
+    if payload.file_options is not None:
+        from .node_files import set_task_options
+        set_task_options(db, task, payload.file_options.model_dump())
     audit(db, who, "create_task", task.id, task.project_id)
-    return task_view(task, version)
+    return task_view(task, version, db)
 
 
 @router.patch("/tasks/{task_id}")
@@ -373,7 +385,8 @@ def update_task(task_id: str, payload: S.TaskUpdate, who=Depends(human), db=Depe
     write_lock(db, who)
     task = require(db, Task, task_id)
     authorize(db, who, task.project_id, "developer")
-    if payload.base_config_hash != task_config_hash(task):
+    from .node_files import task_options
+    if payload.base_config_hash != task_config_hash(task, task_options(db, task.id)):
         raise Problem(409, "stale_config", "任务配置已被其他人修改，请刷新后重试")
     values, version = validated_task_values(db, task.project_id, payload)
     execution_fields = {"version_id", "default_parameters", "node_id", "timeout_seconds", "resource_keys",
@@ -389,8 +402,10 @@ def update_task(task_id: str, payload: S.TaskUpdate, who=Depends(human), db=Depe
         raise Problem(409, "active_schedules", "请先暂停该任务的全部定时计划，再修改执行配置")
     for field, value in values.items():
         setattr(task, field, value)
+    from .node_files import set_task_options, task_options
+    set_task_options(db, task, payload.file_options.model_dump() if payload.file_options is not None else task_options(db, task.id))
     audit(db, who, "update_task", task.id, task.project_id)
-    return task_view(task, version)
+    return task_view(task, version, db)
 
 
 @router.delete("/tasks/{task_id}", status_code=204)
@@ -408,6 +423,11 @@ def delete_task(task_id: str, who=Depends(human), db=Depends(get_db, scope="func
     notification_config = db.get(TaskResultNotificationConfig, task.id)
     if notification_config:
         db.delete(notification_config)
+    from .models import TaskFileOptions
+    file_config = db.get(TaskFileOptions, task.id)
+    if file_config:
+        db.delete(file_config)
+        db.flush()
     audit(db, who, "delete_task", task.id, task.project_id)
     db.delete(task)
     return Response(status_code=204)

@@ -104,6 +104,10 @@ def receive(request: Request, who=Depends(node_identity), db=Depends(get_db, sco
         response["project_id"] = run.project_id
         response["config_revision"] = config.applied_revision if config else 0
         response["allowed_input_roots"] = list(grant.input_roots)
+    from .node_files import run_file_payload
+    files = run_file_payload(db, run)
+    if files:
+        response["node_files"] = files
     return response
 
 

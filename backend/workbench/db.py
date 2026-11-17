@@ -39,12 +39,12 @@ def initialize(engine, factory):
     # create_all不会为已存在的表补索引；保留清理查询的索引须显式、幂等创建。
     for table in Base.metadata.sorted_tables:
         for index in table.indexes:
-            if index.name.startswith("ix_retention_"):
+            if index.name.startswith(("ix_retention_", "ix_run_file_options_")):
                 index.create(engine, checkfirst=True)
     index_inspector = inspect(engine)
     for table in Base.metadata.sorted_tables:
         expected = {index.name: [column.name for column in index.columns]
-                    for index in table.indexes if index.name.startswith("ix_retention_")}
+                    for index in table.indexes if index.name.startswith(("ix_retention_", "ix_run_file_options_"))}
         if not expected:
             continue
         actual = {index["name"]: index["column_names"] for index in index_inspector.get_indexes(table.name)}

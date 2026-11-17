@@ -1,0 +1,5 @@
+本示例使用以下固定依赖，按已有 Excel 示例的版本与许可声明交付：
+- openpyxl 3.1.5，MIT License，https://openpyxl.readthedocs.io/
+- et_xmlfile 2.0.0，MIT License，https://foss.heptapod.net/openpyxl/et_xmlfile
+ZIP 不重新分发上述依赖，执行电脑需预先安装 requirements.txt。
+程序只接受 .xlsx，不支持旧版、宏或加密工作簿。

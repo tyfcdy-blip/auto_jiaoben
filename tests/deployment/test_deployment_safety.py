@@ -174,9 +174,15 @@ def test_retention_and_capacity_are_wired_to_compose_and_production_template(ren
     assert production["WB_MAX_PROJECT_PROGRAM_BYTES"] == "536870912"
 
 
-def test_finalshell_delivery_builder_is_reproducible_and_contains_no_secrets(tmp_path):
+@pytest.mark.parametrize("version", ["0.6.0-rc.4", "0.6.1-rc.1"])
+def test_finalshell_delivery_builder_is_reproducible_and_contains_no_secrets(tmp_path, monkeypatch, version):
+    monkeypatch.setattr(delivery_builder, "release_revision",
+                        lambda: "825e310fd567023542140471e31a147bd0f45b1d")
     image = tmp_path / "image.tar"
-    config = b'{"architecture":"amd64","os":"linux"}'
+    config = json.dumps({"architecture": "amd64", "os": "linux", "config": {"Labels": {
+        "org.opencontainers.image.version": version,
+        "org.opencontainers.image.revision": "825e310fd567023542140471e31a147bd0f45b1d",
+    }}}).encode()
     config_digest = delivery_builder.hashlib.sha256(config).hexdigest()
     platform_manifest = json.dumps({
         "schemaVersion": 2,
@@ -211,7 +217,7 @@ def test_finalshell_delivery_builder_is_reproducible_and_contains_no_secrets(tmp
     }, separators=(",", ":")).encode()
     docker_manifest = json.dumps([{
         "Config": f"blobs/sha256/{config_digest}",
-        "RepoTags": ["automation-workbench:0.6.0-rc.4"],
+        "RepoTags": [f"automation-workbench:{version}"],
         "Layers": [],
     }]).encode()
     with tarfile.open(image, "w") as archive:
@@ -226,9 +232,9 @@ def test_finalshell_delivery_builder_is_reproducible_and_contains_no_secrets(tmp
             archive.addfile(entry, io.BytesIO(content))
     manifest = tmp_path / "release.json"
     manifest.write_text(json.dumps({
-        "release": "v0.6.0-rc.4",
+        "release": f"v{version}",
         "git_commit": "825e310fd567023542140471e31a147bd0f45b1d",
-        "image": "automation-workbench:0.6.0-rc.4",
+        "image": f"automation-workbench:{version}",
         "image_id": f"sha256:{config_digest}",
         "image_index_digest": f"sha256:{image_index_digest}",
         "image_manifest_digest": f"sha256:{platform_manifest_digest}",
@@ -261,9 +267,29 @@ def test_finalshell_delivery_builder_is_reproducible_and_contains_no_secrets(tmp
         environment = archive.extractfile(environment_name).read().decode()
         assert "825e310fd567023542140471e31a147bd0f45b1d" in environment
         assert "REPLACE_WITH" not in environment
+        assert f'RELEASE_VERSION="{version}"' in common
+        assert f'RELEASE_IMAGE="automation-workbench:{version}"' in common
+        assert 'RELEASE_COMMIT="825e310fd567023542140471e31a147bd0f45b1d"' in common
+        assert f'WB_IMAGE=automation-workbench:{version}\n' in environment
+        assert f'WB_RELEASE_VERSION={version}\n' in environment
+        assert 'WB_VCS_REF=825e310fd567023542140471e31a147bd0f45b1d\n' in environment
+        assert any(name.endswith('/scripts/upgrade.sh') for name in names)
+        assert b"\r" not in archive.extractfile(common_name).read()
     with pytest.raises(ValueError, match="拒绝覆盖"):
         delivery_builder.build(image, manifest, output)
     valid_manifest = json.loads(manifest.read_text(encoding="utf-8"))
+
+    changed_commit = dict(valid_manifest, git_commit="a" * 40)
+    manifest.write_text(json.dumps(changed_commit), encoding="utf-8")
+    with pytest.raises(ValueError, match="提交不一致"):
+        delivery_builder.build(image, manifest, tmp_path / "wrong-commit.tar.gz")
+
+    upgraded_manifest = dict(valid_manifest, release="v0.7.0",
+                             image="automation-workbench:0.7.0")
+    manifest.write_text(json.dumps(upgraded_manifest), encoding="utf-8")
+    upgraded_output = tmp_path / "upgrade.tar.gz"
+    with pytest.raises(ValueError, match="归档平台、标签或源码提交"):
+        delivery_builder.build(image, manifest, upgraded_output)
 
     mismatched_identity = dict(valid_manifest)
     mismatched_identity["image_id"] = "sha256:" + "0" * 64
@@ -330,7 +356,8 @@ def test_dispatch_enable_has_fail_closed_recovery():
     assert trap_index < enable_index
     assert "WB_DISPATCH_ENABLED false" in script
     assert "grep -Fxq 'WB_DISPATCH_ENABLED=false'" in script
-    assert "compose stop worker" in script
+    assert "compose stop api worker" in script
+    assert "SET dispatch_enabled=false" in script
     assert "--force-recreate api worker" in script
 
 

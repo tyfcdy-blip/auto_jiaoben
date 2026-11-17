@@ -23,7 +23,8 @@ const route = useRoute()
 const viewKey = computed(() =>
   route.path.startsWith('/runs')
     ? 'global-runs'
-    : session.user?.is_admin && route.path === '/nodes'
+    : route.path.startsWith('/nodes/') ||
+        (session.user?.is_admin && route.path === '/nodes')
       ? 'global-nodes'
       : session.projectId,
 )
@@ -65,6 +66,7 @@ const navigation = computed(() => [
 ])
 const currentPageName = computed(() => {
   if (route.path.startsWith('/runs/')) return '运行详情'
+  if (route.path.startsWith('/nodes/')) return '电脑工作区'
   return (
     navigation.value
       .flatMap((group) => group.entries)
@@ -73,6 +75,7 @@ const currentPageName = computed(() => {
 })
 const scopeName = computed(() => {
   if (route.path.startsWith('/runs/')) return '单次运行记录'
+  if (route.path.startsWith('/nodes/')) return '所选执行电脑'
   if (route.path === '/runs') {
     const projectId =
       typeof route.query.project_id === 'string' ? route.query.project_id : ''

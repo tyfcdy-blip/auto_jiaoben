@@ -11,7 +11,7 @@ from sqlalchemy.exc import IntegrityError
 from .config import Settings
 from .db import database
 from .security import Problem
-from . import routes_auth, routes_catalog, routes_runs, routes_agent, routes_operations
+from . import routes_auth, routes_catalog, routes_runs, routes_agent, routes_operations, routes_node_files
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +63,8 @@ def create_app(settings: Settings | None = None, *, frontend_directory: Path | N
                             "request_id": request.state.request_id})
 
     prefix = settings.base_path + "/api/v1"
-    for router in (routes_auth.router, routes_catalog.router, routes_runs.router, routes_agent.router, routes_operations.router):
+    for router in (routes_auth.router, routes_catalog.router, routes_runs.router, routes_agent.router, routes_operations.router,
+                   routes_node_files.router):
         app.include_router(router, prefix=prefix)
     static_root = frontend_directory or Path(__file__).resolve().parents[2] / "frontend" / "dist"
     if (static_root / "assets").is_dir():

@@ -1,6 +1,8 @@
 自动化工作台 v0.6.0-rc.4｜FinalShell Docker 部署包
 ====================================================
 
+已有工作台的升级请先读 README-UPGRADE.txt；本文件仅适用于首次安装。
+
 适用服务器：CentOS 7 / x86_64、Docker 26.1.4、Compose 2.27.1。
 固定入口：https://ai.muyaju.net/automation/
 

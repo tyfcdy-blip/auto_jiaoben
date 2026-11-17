@@ -116,6 +116,50 @@ def test_invalid_connection_does_not_install_or_create_startup(tmp_path):
     assert "Traceback" not in result.stderr
 
 
+def test_existing_binding_upgrade_keeps_config_token_state_and_changes_runtime(tmp_path):
+    package = extracted_package(tmp_path)
+    connection, _ = connection_file(tmp_path)
+    imported = tmp_path / ".automation-workbench/connections/synthetic-windows-node"
+    old_install, startup = tmp_path / "old-runtime", tmp_path / "startup"
+    first = invoke(package, connection, old_install, imported, startup)
+    assert first.returncode == 0, first.stdout + first.stderr
+    (old_install / "package-version.txt").write_text("0.1.0", encoding="utf-8")
+    (imported / "recovery-evidence.txt").write_text("keep-evidence", encoding="utf-8")
+    preserved = {name: (imported / name).read_bytes()
+                 for name in ("agent.json", "node-token.txt", "recovery-evidence.txt")}
+    new_install = tmp_path / "new-runtime"
+    result = subprocess.run([
+        sys.executable, str(package / "installer.py"), "--upgrade-existing",
+        "--install-root", str(new_install), "--startup-dir", str(startup), "--accept-config",
+    ], capture_output=True, text=True, encoding="utf-8", timeout=90,
+        env=os.environ | {"USERPROFILE": str(tmp_path), "HOME": str(tmp_path), "PYTHONUTF8": "1"})
+    assert result.returncode == 0, result.stdout + result.stderr
+    for name, content in preserved.items():
+        assert (imported / name).read_bytes() == content
+    assert old_install.is_dir() and new_install.is_dir()
+    wrapper = (imported / "run-agent-background.py").read_text(encoding="utf-8")
+    assert repr(str(new_install)) in wrapper and repr(str(old_install)) not in wrapper
+    assert "0.6.1-rc.1" in (new_install / "package-version.txt").read_text()
+    assert "node-files-v1" in (new_install / "agent/node_files.py").read_text(encoding="utf-8")
+    assert len(list(startup.glob("*.vbs"))) == 1
+    assert "node-token" not in result.stdout
+
+
+def test_upgrade_refuses_ambiguous_binding_without_installing(tmp_path):
+    package = extracted_package(tmp_path)
+    for name in ("one", "two"):
+        directory = tmp_path / ".automation-workbench/connections" / name
+        directory.mkdir(parents=True)
+        (directory / "agent.json").write_text('{}')
+    result = subprocess.run([
+        sys.executable, str(package / "installer.py"), "--upgrade-existing",
+        "--install-root", str(tmp_path / "new-runtime"), "--accept-config",
+    ], capture_output=True, timeout=30,
+        env=os.environ | {"USERPROFILE": str(tmp_path), "HOME": str(tmp_path), "PYTHONUTF8": "1"})
+    assert result.returncode == 2
+    assert not (tmp_path / "new-runtime").exists()
+
+
 def test_installer_never_executes_runtime_path_from_connection_file(tmp_path):
     package = extracted_package(tmp_path)
     untrusted = tmp_path / "declared-runtime.exe"
@@ -140,6 +184,21 @@ def test_user_must_confirm_visible_connection_details_before_install(tmp_path):
     assert payload["base_url"] in completed.stdout
     assert payload["token"] not in completed.stdout + completed.stderr
     assert not (tmp_path / "install").exists()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="真实CMD入口仅适用于Windows")
+def test_upgrade_cmd_works_from_chinese_windows_codepage(tmp_path):
+    package = extracted_package(tmp_path)
+    launcher = tmp_path / 'test-upgrade.cmd'
+    launcher.write_bytes(b'@echo off\r\nchcp 936 >nul\r\ncall "%UPGRADE_ENTRY%" --accept-config\r\nexit /b %errorlevel%\r\n')
+    completed = subprocess.run([
+        os.environ.get("COMSPEC", "cmd.exe"), "/d", "/c", str(launcher),
+    ], input=b"\n", capture_output=True, timeout=30,
+        env=os.environ | {"USERPROFILE": str(tmp_path), "HOME": str(tmp_path), "PYTHONUTF8": "1",
+                          "UPGRADE_ENTRY": str(package / "升级已绑定电脑.cmd")})
+    assert completed.returncode == 2  # 无已有绑定：必须到达Python校验，而不是CMD找不到入口。
+    assert b"is not recognized" not in completed.stdout + completed.stderr
+    assert "没有找到唯一" in (completed.stdout + completed.stderr).decode('utf-8', errors='replace')
 
 
 @pytest.mark.skipif(os.name != "nt", reason="真实CMD入口仅适用于Windows")

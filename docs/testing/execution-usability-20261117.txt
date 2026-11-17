@@ -1,0 +1,124 @@
+执行电脑操作与输入输出简化：实施范围及验收计划
+
+事实与基准
+Git基准0753d9a；本次前已有examples/desktop-jobs与tests/desktop_jobs未提交，保留不覆盖。
+用户截图：运行42f72291-49de-46c9-b8ae-cff4f8629c07于11:57:24创建、12:57:25失败，提示排队超时未启动；先前显示平台派发暂停。
+代码：queued_run_reason检查环境dispatch_enabled与Gate；queue_timeout默认3600秒；排队超时逻辑即使暂停仍会执行。不能据此确认电脑已经成功连接，也不能把这次失败判成脚本报错。
+现在已有：项目授权、读取根目录、Python/Node运行时、目录输入、浏览器上传文件、参数普通表单、日志、归档产物。
+当前缺少：远程电脑文件浏览请求通道、独立写入根目录授权、结果另存与单独保存状态、从电脑进入完整任务操作页。
+
+模式和阶段
+全过程开发。第一阶段L2：前端可观察性及输入说明，不变更调度结果/API/数据库/权限，不远程部署。
+第二阶段L3：远程目录元数据与本机写入能力涉及权限、协议及数据库；用户在本任务已回复“同意”，批准以下方案的本地开发与隔离测试。生产部署和生产数据库操作仍需单独授权。
+
+第一阶段用例
+V01 平台派发暂停：运行列表显著显示未执行及原因，不把电脑空闲当成可调度；只提示管理步骤，不提供无接口支撑的开关。
+V02 排队超时：详情清楚显示程序从未启动；缺少退出码/日志不是执行器异常。
+V03 实时状态：列表/电脑页每5秒刷新，可见且无请求时才请求；隐藏、卸载、失败行为受测。
+V04 输入区分：浏览器上传明确为浏览器所在电脑；目录输入说明路径属于执行电脑、不需要服务器共享盘。
+V05 参数表单：空字符串枚举显示可读说明，提交仍保持空字符串而非null或丢失字段。
+
+第二阶段具体目标（已获本地实施授权，按实际测试结果验收）
+入口：执行电脑→电脑详情→任务清单→新建任务。必须选获授权项目；绑定当前电脑，原任务管理入口保留。
+程序：继续固定已发布版本；程序包由开发者一次声明参数中文名、类型、默认值、文件选择含义。运行者只填表单，不粘JSON Schema。
+输入：无输入、当前电脑上传、执行电脑授权文件/目录三种来源明确区分。支持多文件选择，文件参数映射由程序声明，不能猜字段含义。
+文件选择：网页创建有截止时间的浏览请求；Agent通过现有HTTPS主动拉取，再回传有界元数据。云服务器不挂载本机盘，不访问SMB，不让浏览器直接读取远程盘。
+权限：按项目授权可读根目录展示；每次请求、领取、回传均校验项目/节点/身份/配置修订。拒绝父目录逃逸、符号链接/junction越界，分页限量，不递归扫描整盘。离线展示明确错误，超时不伪造空目录。
+结果：保留现有受控output_dir及服务器归档；新增“另存到执行电脑文件夹”。只允许管理员单独授权的可写根目录，读取授权绝不能自动变成写入授权。
+保存：每次运行写入目标根目录/运行ID独立子目录；不覆盖已存在内容、不允许脚本参数指定任意系统路径。仅导出结果协议声明且通过校验的产物，路径和文件名二次校验。
+状态：程序执行、文件另存、上传归档、消息发送分开显示。复制失败可明确定位重试，不能把脚本重新执行当作文件保存重试。
+兼容：新版Agent报告独立能力；旧Agent保持原行为，不能显示可用的远程浏览/另存按钮。服务端与Agent升级顺序明确，任务现有默认值不改变。
+
+第二阶段必要门禁
+数据库：新增浏览请求持久状态及目录写权限字段的独立迁移；只操作隔离测试库；生产迁移/发布单独授权。
+协议：仅新增可选能力，不复用用户任意命令执行；请求ID、过期时间、项目和配置修订必须明确。
+用例：跨项目越权、路径穿越、符号链接/junction、UNC拒绝或显式授权、离线/超时、并发重复请求、文件改变/消失、磁盘不足/只读目录、已有目标拒绝覆盖、复制部分失败、上传失败、进程中断恢复、旧Agent兼容。
+全链路：隔离服务+Agent真实轮询→目录列表→选择文件→运行→本机另存→服务器归档→网页状态；真实钉钉在获授权测试群单独验收。
+回滚：停用新功能及新请求，保留已保存产物和审计；兼容字段与新表不直接删除，确认无活动请求后回退应用/Agent；绝不回滚删除业务文件。
+
+当前生产边界
+尚未改变服务器派发开关、队列、数据库、Nginx、账号或执行电脑授权。前端本地修改未经打包部署不会改变线上页面。
+排队中任务恢复派发前应由管理员核对全队列；已超时的旧记录不会因打开开关自动重跑，需确认后手动新建一次运行。
+
+第一阶段主线执行证据
+新增行为用例：execution-visibility.test.ts九项；parameter-fields.test.ts新增空字符串枚举标签及提交值用例。
+前端目录npm test：18文件、164通过、0失败，退出0。
+前端目录npm run build：vue-tsc与Vite构建100模块通过，退出0。
+前端目录npm run format:check：通过，退出0。
+仓库git diff --check：通过，退出0。
+测试数据为Mock API与组件挂载；覆盖派发暂停、未启动超时、真实启动证据分支、可见/隐藏/请求中/卸载轮询、参数提交与既有前端回归。
+未做真实浏览器端到端与生产验证；无后端/API/数据库修改，因此本阶段不执行数据库迁移或后台全量回归。
+Codex开发完成：仅第一阶段；整个输入输出简化需求尚未完成。
+测试计划/用例：已生成；自动化测试：已执行；用户人工验证：未执行；CI：未执行；开发最终确认及人工代码评审：未执行。
+发布：未commit/push、未重打部署包、未更新生产；需要后续发布门禁。
+Codex自检不等于开发自测确认、人工代码评审、CI验证或发布审批。
+复核整改：空字符串选项改为中性文案，不假设程序默认行为；在线文案对齐后端“已启用且最近有心跳”。补RunDetail双请求门禁/可见/卸载测试及Runs、Nodes网络失败恢复测试；格式检查曾因主线文案修改失败，格式化后复验通过。
+独立复核收口：前述P2已修正，未发现P0/P1或新的代码P2；计数按补测后真实结果更新为164。第一阶段AI自检有条件通过，剩余未验证项为真实浏览器及生产部署。
+
+第二阶段工作包与用例追踪（2026-11-17）
+M1 授权与远程浏览：服务端持久化请求/权限；Agent仅列授权路径；网页选择器处理等待、离线、失败、分页。对应F01正常单层浏览、F02跨项目/撤权/配置过期、F03遍历与链接逃逸、F04超时与重复回传、F05大目录限量和分页。
+M2 任务文件配置与结果保存：固定节点+输入参数映射+输出授权目录；每次运行快照、Agent二次验证、结果独立保存。对应F06单文件/多文件/目录映射、F07运行覆盖与定时默认、F08独立目录不覆盖、F09复制失败与恢复、F10归档和保存状态独立、F11旧Agent/旧任务兼容。
+M3 操作与验证：电脑详情任务入口、普通参数表单、状态分解；独立PostgreSQL+实际Agent全链路及浏览器验收。对应F12电脑进入创建任务、F13真实本机输入到本机保存与云端下载、F14旧数据库增量初始化幂等、F15旧前端和后端回归。
+实施分工：backend worker负责backend/workbench及专属backend测试；agent worker负责agent、contracts/runtime及专属agent测试；frontend worker负责frontend/src与组件测试；主线负责集成、最终证据与独立复核。
+测试数据：临时目录生成的合成文件和独立测试项目；不连接生产、不发真实钉钉、不触碰业务文件。无法执行的故障/平台专项明确列未验证，不把Mock结果记为真实系统通过。
+退出条件：关键用例、相关构建、回归和独立复核通过；无未关闭P0/P1。升级顺序、回滚边界和未验证项单独披露。
+
+第二阶段最终本地验收记录
+
+一、任务闭环
+模式：全过程开发；等级：L3，涉及跨端协议、目录权限、文件写入及数据库增量。
+Git基准：main，0753d9a8d27ab85a68b5c54af2dcb098e1df3553；本轮未commit/push/tag/部署，保留既有desktop-jobs修改。
+M1/F01-F05：backend/workbench/node_files.py、routes_node_files.py、node_file_schemas.py；agent/node_files.py、node_file_service.py；frontend/RemotePathPicker.vue。API/Agent/组件用例及真实HTTP分页通过。
+M2/F06-F11：TaskFileOptions/RunFileOptions快照，execution受理及claim，Agent目录句柄保护、另存/重试，TaskFileFields与RunDetail。多文件真实处理、双端产物内容一致、不覆盖、失败独立重试通过；既有Agent/后端回归通过。
+M3/F12-F15：NodeDetailView入口、TasksView表单、四新表幂等初始化。真实Edge网页从电脑创建任务并运行成功；PostgreSQL迁移保留旧记录/派发关闭，重复初始化通过。
+程序注解字段由版本参数定义提供（x-workbench-file）；本次未新增ZIP内workbench.json自动导入功能，不要求普通运行者填写JSON。
+
+二、测试证据（数字按各次命令独立统计，不能相加当成唯一用例数）
+环境：Windows，本仓库.venv Python3.12；本机独立PostgreSQL17.11测试schema；临时合成文件；Edge无头浏览器1440x1000；不连接生产、真实钉钉或业务目录。
+命令1：.venv/Scripts/python.exe -m pytest tests -q --tb=short --junitxml=runtime/verification/node-files-python.xml
+设置DESKTOP_JOB_PYTHON为本仓库.venv-desktop-jobs/Scripts/python.exe。退出0，457通过/39跳过/0失败，165.61秒。
+跳过含：PostgreSQL专用8项、恢复派发保护6项（均在后续补测），本机不支持的旧符号链接清理1项、Linux bash入口1项、显式旧live-agent/nine环境6项、原始nine源码/运行时17项。没有通过删除断言或扩大跳过处理失败。
+命令2：.venv/Scripts/python.exe -m pytest tests/backend -q --tb=short --junitxml=runtime/verification/node-files-postgres.xml
+设置WORKBENCH_TEST_DATABASE_FILE为runtime/postgres17/instance.local.json指向的本机隔离连接文件。退出0，169通过/1跳过/0失败，127.34秒。唯一跳过为旧文件清理符号链接权限测试；并发调度、上传锁与提交时序专项实际通过。
+命令3：.venv/Scripts/python.exe -m pytest tests/integration/test_node_files_live.py tests/deployment/test_restore_gate_postgres.py -q --tb=short --junitxml=runtime/verification/node-files-live.xml
+同命令2的隔离PG，增加WB_NODE_FILES_BROWSER=1。退出0，7通过/0跳过/0失败，20.04秒。
+其中整链路包含真实HTTP服务、独立Agent子进程、本机目录分页、多文件参数、运行、本机另存、平台下载、保存冲突、retry-1只复制且attempt不变，以及真实网页创建/文件选择/提交/最终状态。恢复6项仅验证恢复后关闭派发的SQL，不冒充pg_restore全量恢复演练。
+前端目录：npm test退出0，19文件179通过/0失败；npm run format:check退出0；VITE_BASE_PATH=/automation/ npm run build退出0，vue-tsc与Vite114模块通过。
+静态：.venv/Scripts/python.exe -m ruff check backend agent tests deploy退出0；git diff --check退出0（Git提示部分旧CRLF会标准化为LF，不是检查失败）。
+最终网页证据：runtime/verification/node-files-ui/result.json、computer.png、task-files.png、run-results.png。已查看截图，电脑状态、授权选择、成功/归档/本机保存可读，1440像素无横向溢出。
+Agent作者Windows全量152通过；最终目录专项59通过，服务端作者独立执行同59项通过。Linux现有Docker镜像+源码只读挂载执行6项真实文件检查通过（复制、目录替换、输入清单、分页）；不是生产部署或Linux全量测试。
+测试过程先后发现并修复协议时间类型错误、表单标签定位/多语句模板编译问题、未用导入。修复后以上最终命令全部复验。
+
+三、缺陷、风险与回滚
+已关闭P1：文件设置绕过任务修改保护与版本冲突；合法布尔schema异常；本次清空文件恢复旧默认值；改为自动匹配仍残留文件设置；目录替换造成越界写入；项目管理员可扩大电脑级写目录；专用接口清空后任务默认参数残留。
+目录P1采用持有目录句柄/相对目录描述符修复，包含祖先、目标及源路径，故障测试验证未产生越权文件；曾因祖先写共享锁阻止合法状态保存，已调整并复验正常重试。
+已关闭P2：文件配置变化导致排队无明确原因、另存未启动永久pending、多选数量无前置限制、临时浏览记录无界累积、结果重试查询索引。浏览元数据过期24小时后按本节点每次最多100条回收，任务/运行/审计及真实文件不受影响。
+当前未发现未关闭P0/P1。未验证：真实生产链路、真实SMB共享/ACL差异、真实钉钉、100台电脑/任务压力、完整数据库+平台文件备份恢复与旧镜像回退演练。上述不能以本地通过推定生产通过。
+兼容：旧Agent无node-files-v1时不显示可用新操作；旧任务无注解维持原行为。四新表保留旧schema_version=1，未修改历史字段；新增能力先升级服务器再升级Agent。
+回滚：先关闭新能力任务/计划，处置新任务排队和在途运行，再回退镜像/Agent；保留四表与结果文件。旧版本不能忽略新文件设置继续调度新任务。生产操作与最终发布包需单独确认。
+
+四、质量状态
+Codex开发完成：本地已批准范围完成。
+测试计划/用例已生成：是，F01-F15及自动化源码已落盘。
+自动化测试已执行：是，实际结果见上文。
+人工验证已执行：用户/人工验证未执行；Codex真实浏览器自动化与截图复核已执行。
+剩余未验证项：上一节列出，生产发布前必须核对。
+独立复核通过：后端、前端和Agent分别由非作者复核；发现的P1已修复复验，主线另跑全链路和回归。
+CI通过：未执行远端CI；本地同类检查不能替代CI。
+开发最终确认：待用户确认。
+人工代码评审通过：未执行。
+允许发布：否，当前仅本地验收，不代表批准生产变更。
+AI自检结论：有条件通过（本地功能及关键自动化证据通过，保留以上环境/发布限制）。
+Codex自检通过不等于开发自测确认、人工代码评审、CI验证或发布审批通过。
+
+最终增补复验（最后权限/清空修复之后）
+命令：.venv/Scripts/python.exe -m pytest tests/backend tests/integration/test_node_files_live.py tests/deployment/test_restore_gate_postgres.py -q --tb=short --junitxml=runtime/verification/node-files-final-postgres.xml
+使用前述独立PG及WB_NODE_FILES_BROWSER=1。退出0，178通过/1跳过/0失败，132.12秒；覆盖新增两项P1及所有后端、真实网页/Agent整链路。前述457/39是此前全仓回归，本次按实际变更重跑受影响范围，不把不同版本计数混合。
+主线补做Linux现有镜像+源码只读挂载pytest：tests/agent/test_node_files.py tests/agent/test_directory_input.py，58通过/1跳过/0失败（跳过Windows专属junction）。Windows同两模块59通过/0跳过，退出0。
+Linux首轮发现旧测试把os.scandir参数当路径，不支持新的目录描述符；将故障注入移到GuardedDirectory.scan，保留原startup_failed断言，双平台复验通过，没有跳过或降低原测试。
+最终Docker构建：docker build --platform linux/amd64 --build-arg VITE_BASE_PATH=/automation/ --build-arg RELEASE_VERSION=node-files-local-check --build-arg VCS_REF=0753d9a-local-uncommitted --build-arg NODE_IMAGE=node@sha256:43ac6c60b8f89723f746e8a92ce91abd5017e627ce1ddfe4238355d3a30b772c --build-arg PYTHON_IMAGE=python@sha256:392307d22300de8b5986851a12d9176dfc0fc073e65bf6523ebd7dcbeb23564e -t automation-workbench:node-files-local-check .
+构建退出0，包含最后服务端修复。docker image inspect身份sha256:67ef2234662a2b61beca45c8e3b2dfb8b545b292cd064eba5f2efb5dc346da0f，linux/amd64，运行用户10001:10001。
+镜像临时运行：Get-Content -Raw tests/deployment/node_files_image_smoke.py | docker run --rm -i --network none --read-only --tmpfs /tmp:rw,mode=1777 --entrypoint python automation-workbench:node-files-local-check -
+退出0，验证镜像内四表幂等初始化、/automation/网页/静态资源/API、未登录401、新Agent模块及Unix秒协议；只用/tmp合成数据库，未开放端口、未挂生产卷、未运行生产服务。
+本地镜像是验证标签，不是固定Git提交的正式发布基线，未导出部署包、未替换现有运行容器。后续正式发布仍要获得授权、形成Git/镜像基线并完成生产备份恢复与部署验收。
+最后两项权限/清空修复独立收口：非作者只读复核并执行tests/backend/test_node_files_api.py，17通过/0失败/0跳过，退出0；确认两项P1关闭，未发现新增P0/P1。主线最终静态及差异检查通过。

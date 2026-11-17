@@ -15,9 +15,12 @@ def test_windows_agent_package_requires_login_and_contains_only_expected_runtime
         assert "agent/__main__.py" in names
         assert "contracts/runtime/claim.schema.json" in names
         assert {name for name in names if "/" not in name} == {
-            "安装并连接.cmd", "installer.py", "requirements-agent.txt", "使用说明.txt"}
+            "安装并连接.cmd", "升级已绑定电脑.cmd", "installer.py", "requirements-agent.txt", "使用说明.txt"}
         command = archive.read("安装并连接.cmd")
         assert b"\r\n" in command and b"\n" not in command.replace(b"\r\n", b"")
+        upgrade = archive.read("升级已绑定电脑.cmd")
+        assert b"--upgrade-existing" in upgrade
+        assert b"\n" not in upgrade.replace(b"\r\n", b"")
         assert len(names) == len({name.casefold() for name in names})
         assert not any("__pycache__" in name or name.endswith((".pyc", ".json.local")) for name in names)
         combined = b"".join(archive.read(name) for name in names)

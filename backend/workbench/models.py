@@ -140,6 +140,57 @@ class Task(Entity, Base):
     enabled: Mapped[bool] = mapped_column(default=True)
 
 
+class NodeFileConfig(Base):
+    __tablename__ = "node_file_config"
+    node_id: Mapped[str] = mapped_column(ForeignKey("nodes.id"), primary_key=True)
+    revision: Mapped[int] = mapped_column(default=0)
+    config_hash: Mapped[str] = mapped_column(String(64), default="")
+    output_roots: Mapped[list] = mapped_column(JSON, default=list)
+    grants: Mapped[list] = mapped_column(JSON, default=list)
+    applied_revision: Mapped[int] = mapped_column(default=0)
+    apply_status: Mapped[str] = mapped_column(String(20), default="pending")
+
+
+class NodeFileRequest(Entity, Base):
+    __tablename__ = "node_file_requests"
+    node_id: Mapped[str] = mapped_column(ForeignKey("nodes.id"), index=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), index=True)
+    actor: Mapped[str] = mapped_column(String(100))
+    purpose: Mapped[str] = mapped_column(String(10))
+    path: Mapped[str] = mapped_column(Text)
+    limit: Mapped[int] = mapped_column(default=200)
+    offset: Mapped[int] = mapped_column(default=0)
+    config_revision: Mapped[int] = mapped_column()
+    output_config_revision: Mapped[int] = mapped_column(default=0)
+    expires_at: Mapped[float] = mapped_column(Float)
+    state: Mapped[str] = mapped_column(String(20), default="pending", index=True)
+    response: Mapped[dict | None] = mapped_column(JSON)
+    response_hash: Mapped[str | None] = mapped_column(String(64))
+
+
+class TaskFileOptions(Base):
+    __tablename__ = "task_file_options"
+    task_id: Mapped[str] = mapped_column(ForeignKey("tasks.id"), primary_key=True)
+    options: Mapped[dict] = mapped_column(JSON)
+
+
+class RunFileOptions(Base):
+    __tablename__ = "run_file_options"
+    __table_args__ = (Index("ix_run_file_options_retry", "node_id", "retry_requested"),)
+    run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"), primary_key=True)
+    node_id: Mapped[str] = mapped_column(ForeignKey("nodes.id"))
+    options: Mapped[dict] = mapped_column(JSON)
+    config_revision: Mapped[int] = mapped_column()
+    output_config_revision: Mapped[int] = mapped_column(default=0)
+    save_state: Mapped[str] = mapped_column(String(20), default="not_requested")
+    saved_files: Mapped[list] = mapped_column(JSON, default=list)
+    save_error: Mapped[str] = mapped_column(Text, default="")
+    save_hash: Mapped[str | None] = mapped_column(String(64))
+    retry_number: Mapped[int] = mapped_column(default=0)
+    retry_requested: Mapped[bool] = mapped_column(default=False)
+    retry_expires_at: Mapped[float | None] = mapped_column(Float)
+
+
 class Batch(Entity, Base):
     __tablename__ = "batches"
     __table_args__ = (UniqueConstraint("project_id", "label"),)

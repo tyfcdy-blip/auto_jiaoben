@@ -17,6 +17,17 @@ jobs:
   python:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:17-bookworm
+        env:
+          POSTGRES_DB: workbench_ci
+          POSTGRES_USER: workbench_ci
+          POSTGRES_PASSWORD: isolated-ci-only
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U workbench_ci -d workbench_ci"
+          --health-interval 5s --health-timeout 3s --health-retries 12
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
@@ -29,9 +40,14 @@ jobs:
           python -m venv .ci-excel-venv
           .ci-excel-venv/bin/python -m pip install -r examples/excel-sheet-merger/requirements.txt
       - run: ruff check backend agent tests deploy
+      - name: Configure disposable PostgreSQL test database
+        run: |
+          mkdir -p runtime/verification
+          python -c "import json,pathlib; pathlib.Path('runtime/verification/ci-database.local.json').write_text(json.dumps({'database_url':'postgresql+psycopg://workbench_ci:isolated-ci-only@127.0.0.1:5432/workbench_ci'}))"
       - run: pytest tests -q --junitxml=runtime/verification/ci-python.xml
         env:
           EXCEL_TEST_PYTHON: ${{ github.workspace }}/.ci-excel-venv/bin/python
+          WORKBENCH_TEST_DATABASE_FILE: ${{ github.workspace }}/runtime/verification/ci-database.local.json
       - name: Upload Python test report
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

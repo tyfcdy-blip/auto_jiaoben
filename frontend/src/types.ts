@@ -48,6 +48,14 @@ export interface Task {
   config_hash: string
 }
 export interface Run {
+  file_status?: {
+    enabled: boolean
+    inputs: Record<string, string | string[]>
+    output_dir: string | null
+    save_state: 'not_requested' | 'pending' | 'succeeded' | 'failed'
+    saved_files: { name: string; path: string }[]
+    save_error: string
+  } | null
   id: string
   project_id: string
   project_name?: string

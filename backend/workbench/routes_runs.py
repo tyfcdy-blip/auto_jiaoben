@@ -4,11 +4,12 @@ from sqlalchemy import select, func
 from . import schemas as S
 from .security import write_lock
 from .execution import ACTIVE, admit, trigger_authorized, release, queued_run_reason, TERMINAL
-from .models import Run, Task, Version, Artifact, LogEntry, Project, TriggerEvent
+from .models import Run, Task, Version, Artifact, LogEntry, Project, TriggerEvent, RunFileOptions
 from .security import Problem, audit, authorize, get_db, human, identity, require
 from .storage import object_path
 from .views import project_filter, public, run_view
 from .retention import file_views, require_available
+from .node_files import run_file_status
 import time
 
 router = APIRouter()
@@ -41,7 +42,8 @@ def trigger(task_id: str, payload: S.RunCreate, request: Request, response: Resp
     task = require(db, Task, task_id)
     trigger_authorized(db, who, task)
     run, duplicate = admit(db, request.app.state.settings, task, who.actor, payload.event_id,
-                           payload.parameters, payload.input_batch_id, "event" if who.kind == "caller" else "manual")
+                           payload.parameters, payload.input_batch_id, "event" if who.kind == "caller" else "manual",
+                           file_options=payload.file_options.model_dump() if payload.file_options else None)
     audit(db, who, "trigger_duplicate" if duplicate else "trigger", run.id, task.project_id)
     response.status_code = 200 if duplicate else 202
     return {"run_id": run.id, "accepted": True, "deduplicated": duplicate, "state": run.state}
@@ -54,6 +56,7 @@ def _run_response(db, settings, run, cache=None):
     if run.task_id not in task_cache:
         task_cache[run.task_id] = db.get(Task, run.task_id)
     result = public(run)
+    result["file_status"] = run_file_status(db, run, cache.get("file_options"))
     result["task_name"] = task_cache[run.task_id].name
     if run.project_id not in project_cache:
         project_cache[run.project_id] = db.get(Project, run.project_id)
@@ -67,7 +70,7 @@ def _run_response(db, settings, run, cache=None):
 
 
 @router.get("/runs")
-def runs(request: Request, project_id: str | None = None, task_id: str | None = None,
+def runs(request: Request, project_id: str | None = None, task_id: str | None = None, node_id: str | None = None,
          schedule_id: str | None = None,
          state: str | None = Query(
              None,
@@ -89,6 +92,8 @@ def runs(request: Request, project_id: str | None = None, task_id: str | None = 
         )
         if task_id:
             query = query.where(Run.task_id == task_id)
+        if node_id:
+            query = query.where((Run.node_id == node_id) | Run.task_id.in_(select(Task.id).where(Task.node_id == node_id)))
         if state:
             query = query.where(Run.state == state)
         if state_group:
@@ -113,7 +118,8 @@ def runs(request: Request, project_id: str | None = None, task_id: str | None = 
             ranked_events.c.run_id,
             ranked_events.c.id,
         ).where(ranked_events.c.position == 1)).all()) if run_ids else {}
-        cache: dict = {}
+        cache: dict = {"file_options": {record.run_id: record for record in db.scalars(
+            select(RunFileOptions).where(RunFileOptions.run_id.in_(run_ids)))}}
         items = []
         for event, run in pairs:
             item = _run_response(db, request.app.state.settings, run, cache)
@@ -130,6 +136,8 @@ def runs(request: Request, project_id: str | None = None, task_id: str | None = 
         return {"items": items, "total": total}
 
     query = project_filter(db, who, select(Run).order_by(Run.created_at.desc(), Run.id.desc()), Run, project_id)
+    if node_id:
+        query = query.where((Run.node_id == node_id) | Run.task_id.in_(select(Task.id).where(Task.node_id == node_id)))
     if task_id:
         query = query.where(Run.task_id == task_id)
     if state:
@@ -143,6 +151,8 @@ def runs(request: Request, project_id: str | None = None, task_id: str | None = 
     task_ids, version_ids = {run.task_id for run in records}, {run.version_id for run in records}
     project_ids = {run.project_id for run in records}
     reason_cache: dict = {
+        "file_options": {record.run_id: record for record in db.scalars(select(RunFileOptions).where(
+            RunFileOptions.run_id.in_([run.id for run in records])))},
         "tasks": {task.id: task for task in db.scalars(
             select(Task).where(Task.id.in_(task_ids))).all()} if task_ids else {},
         "versions": {version.id: version for version in db.scalars(
@@ -162,6 +172,7 @@ def run_detail(run_id: str, request: Request, who=Depends(identity), db=Depends(
     result["artifacts"] = file_views(
         db, "artifact", db.scalars(select(Artifact).where(Artifact.run_id == run.id)), public)
     if who.kind == "caller":
+        result.pop("file_status", None)
         result.pop("late_evidence", None)
         result.pop("parameters", None)
         for key in ("actor", "node_id", "attempt_id", "waiting_reason", "waiting_reason_code", "project_name"):

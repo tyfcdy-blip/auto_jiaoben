@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onScopeDispose, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import {
   canDevelop,
   canManage,
@@ -26,6 +26,14 @@ import StatusBadge from '../components/StatusBadge.vue'
 import Pagination from '../components/Pagination.vue'
 import DirectoryFields from '../components/DirectoryFields.vue'
 import ParameterFields from '../components/ParameterFields.vue'
+import TaskFileFields from '../components/TaskFileFields.vue'
+import NodeDirectoryButton from '../components/NodeDirectoryButton.vue'
+import {
+  emptyFileOptions,
+  fileFields,
+  NODE_FILES_CAPABILITY,
+  type FileOptions,
+} from '../nodeFiles'
 import { useBatchDelivery } from '../batchDelivery'
 import {
   DIRECTORY_CAPABILITY,
@@ -39,11 +47,16 @@ onScopeDispose(() => {
   scope++
 })
 const router = useRouter(),
+  route = useRoute(),
   taskOffset = ref(0),
   taskSearch = ref(''),
   taskResource = useResource<Page<Task>>(() => {
     if (!session.projects.length) return null
-    const path = projectPath('/tasks', taskOffset.value)
+    const path =
+      projectPath('/tasks', taskOffset.value) +
+      (typeof route.query.node_id === 'string'
+        ? `&node_id=${encodeURIComponent(route.query.node_id)}`
+        : '')
     return taskSearch.value.trim()
       ? `${path}&q=${encodeURIComponent(taskSearch.value.trim())}`
       : path
@@ -73,6 +86,44 @@ const name = ref(''),
   operation = ref('run'),
   businessFields = ref('')
 const preferredVersionId = ref('')
+const fileOptions = ref<FileOptions>(emptyFileOptions())
+const hasManagedFileOptions = ref(false)
+const runFileOptions = ref<FileOptions>(emptyFileOptions())
+const runNode = ref<Node | null>(null)
+const selectedNode = computed(
+  () => nodes.value.find((node) => node.id === nodeId.value) || null,
+)
+const canSelectFiles = computed(() =>
+  Boolean(selectedNode.value?.capabilities.includes(NODE_FILES_CAPABILITY)),
+)
+const fileKeys = computed(() =>
+  canSelectFiles.value
+    ? fileFields(selectedParameterSchema.value).map((field) => field.key)
+    : [],
+)
+const runFileKeys = computed(() =>
+  runNode.value?.capabilities.includes(NODE_FILES_CAPABILITY)
+    ? fileFields(runTask.value?.parameter_schema).map((field) => field.key)
+    : [],
+)
+function updateFileOptions(value: FileOptions, forRun = false) {
+  const currentOptions = forRun ? runFileOptions : fileOptions
+  const currentParameters = forRun ? runParameters : parameters
+  let values: Record<string, unknown>
+  try {
+    values = parseObject(currentParameters.value)
+  } catch {
+    return
+  }
+  for (const key of Object.keys(currentOptions.value.inputs)) delete values[key]
+  Object.assign(values, value.inputs)
+  currentOptions.value = value
+  currentParameters.value = JSON.stringify(values, null, 2)
+}
+async function loadFileOptions(taskId: string): Promise<FileOptions> {
+  const value = await request<FileOptions>(`/tasks/${taskId}/file-options`)
+  return { inputs: value.inputs, output_dir: value.output_dir }
+}
 const runParameters = ref('{}'),
   batchId = ref(''),
   runInputMode = ref<'none' | 'existing' | 'upload'>('none'),
@@ -182,9 +233,17 @@ watch(
     runInputDir.value = ''
     runBatchKey.value = ''
     parameters.value = '{}'
+    fileOptions.value = emptyFileOptions()
+    hasManagedFileOptions.value = false
+    runFileOptions.value = emptyFileOptions()
+    runNode.value = null
   },
 )
-async function prepareCreate() {
+async function prepareCreate(
+  preferredNodeId = typeof route.query.node_id === 'string'
+    ? route.query.node_id
+    : '',
+) {
   const current = scope
   await action.perform(async () => {
     const [programResult, nodeResult] = await Promise.all([
@@ -199,7 +258,13 @@ async function prepareCreate() {
     nodes.value = nodeResult.items
     name.value = ''
     parameters.value = '{}'
-    nodeId.value = ''
+    inputDir.value = ''
+    batchKey.value = ''
+    nodeId.value = nodeResult.items.some((node) => node.id === preferredNodeId)
+      ? preferredNodeId
+      : ''
+    fileOptions.value = emptyFileOptions()
+    hasManagedFileOptions.value = false
     timeout.value = 300
     resources.value = ''
     requiresInput.value = false
@@ -218,6 +283,16 @@ async function prepareEdit(task: Task) {
     if (current !== scope) return
     programs.value = programResult.items
     nodes.value = nodeResult.items
+    hasManagedFileOptions.value = Boolean(
+      task.node_id &&
+      nodeResult.items
+        .find((node) => node.id === task.node_id)
+        ?.capabilities.includes(NODE_FILES_CAPABILITY),
+    )
+    fileOptions.value = hasManagedFileOptions.value
+      ? await loadFileOptions(task.id)
+      : emptyFileOptions()
+    if (current !== scope) return
     editingTask.value = task
     preferredVersionId.value = task.version_id
     programId.value = task.program_id || ''
@@ -251,7 +326,10 @@ async function saveTask() {
         !selectableNodes.value.some((node) => node.id === nodeId.value)
       )
         throw new Error('文件夹输入必须选择一台支持目录读取的固定执行电脑。')
-      const defaults = parseObject(parameters.value)
+      const defaults = {
+        ...parseObject(parameters.value),
+        ...fileOptions.value.inputs,
+      }
       const body = {
         project_id: session.projectId,
         name: name.value.trim(),
@@ -276,6 +354,9 @@ async function saveTask() {
         ],
         requires_input: isDirectory.value ? false : requiresInput.value,
         operation: operation.value.trim(),
+        ...(canSelectFiles.value || hasManagedFileOptions.value
+          ? { file_options: fileOptions.value }
+          : {}),
       }
       if (editingTask.value) {
         delete (body as { project_id?: string }).project_id
@@ -330,6 +411,19 @@ async function prepareRun(task: Task) {
       : await loadChoices<Batch>(projectPath('/batches'))
     if (current !== scope) return
     batches.value = response.items
+    runNode.value = task.node_id
+      ? (
+          await loadChoices<Node>(
+            `/nodes?project_id=${encodeURIComponent(task.project_id)}`,
+          )
+        ).items.find((node) => node.id === task.node_id) || null
+      : null
+    runFileOptions.value = runNode.value?.capabilities.includes(
+      NODE_FILES_CAPABILITY,
+    )
+      ? await loadFileOptions(task.id)
+      : emptyFileOptions()
+    if (current !== scope) return
     runTask.value = task
     const defaults = task.default_parameters || {}
     const split = splitDirectoryParameters(defaults)
@@ -354,7 +448,10 @@ async function startRun() {
     const selectedEventId = eventId.value
     const selectedInputDir = runInputDir.value
     const selectedBatchKey = runBatchKey.value
-    const values = parseObject(runParameters.value)
+    const values = {
+      ...parseObject(runParameters.value),
+      ...runFileOptions.value.inputs,
+    }
     if (directoryTask(task) && !task.node_id)
       throw new Error('这个目录任务尚未绑定执行电脑，请先修正任务配置。')
     if (
@@ -384,6 +481,9 @@ async function startRun() {
         method: 'POST',
         body: {
           event_id: selectedEventId,
+          ...(runNode.value?.capabilities.includes(NODE_FILES_CAPABILITY)
+            ? { file_options: runFileOptions.value }
+            : {}),
           ...(directoryTask(task)
             ? {}
             : {
@@ -569,6 +669,24 @@ async function deleteSchedule() {
     )
   }, '定时计划已删除，历史运行仍保留在运行中心')
 }
+watch(
+  () => [route.query.create, route.query.node_id, session.projectId],
+  async () => {
+    const preferred =
+      typeof route.query.node_id === 'string' ? route.query.node_id : ''
+    if (
+      route.query.create !== '1' ||
+      !preferred ||
+      !canDevelop.value ||
+      action.pending.value
+    )
+      return
+    await prepareCreate(preferred)
+    if (createOpen.value)
+      await router.replace({ path: '/tasks', query: { node_id: preferred } })
+  },
+  { immediate: true },
+)
 </script>
 <template>
   <header class="page-header">
@@ -576,12 +694,16 @@ async function deleteSchedule() {
       <p class="eyebrow">让程序按你的安排工作</p>
       <h1>任务管理</h1>
       <p>选择程序和执行电脑，创建可手动、定时或由事件触发的任务。</p>
+      <p v-if="route.query.node_id" class="muted">
+        当前只显示选定电脑的任务。
+        <RouterLink class="text-link" to="/tasks">查看全部电脑任务</RouterLink>
+      </p>
     </div>
     <button
       v-if="canDevelop"
       class="button primary"
       :disabled="action.pending.value"
-      @click="prepareCreate"
+      @click="prepareCreate()"
     >
       ＋ 创建任务
     </button>
@@ -740,7 +862,12 @@ async function deleteSchedule() {
         </label>
         <label>
           程序
-          <select v-model="programId" required>
+          <select
+            v-model="programId"
+            required
+            aria-label="程序"
+            @change="updateFileOptions({ ...fileOptions, inputs: {} })"
+          >
             <option value="" disabled>请选择程序</option>
             <option
               v-for="program in programs"
@@ -757,6 +884,7 @@ async function deleteSchedule() {
             v-model="nodeId"
             aria-label="执行电脑"
             :required="isDirectory"
+            @change="updateFileOptions(emptyFileOptions())"
           >
             <option value="">
               {{ isDirectory ? '请选择固定执行电脑' : '自动匹配可用节点' }}
@@ -788,14 +916,34 @@ async function deleteSchedule() {
       <ParameterFields
         v-model="parameters"
         :schema="selectedParameterSchema"
+        :omit-keys="fileKeys"
         :label="isDirectory ? '其他默认业务参数' : '默认业务参数'"
+      />
+      <NodeDirectoryButton
+        v-if="isDirectory"
+        :node="selectedNode"
+        :project-id="session.projectId"
+        :disabled="action.pending.value"
+        @select="inputDir = $event"
+      />
+      <TaskFileFields
+        :model-value="fileOptions"
+        :node="selectedNode"
+        :project-id="session.projectId"
+        :schema="selectedParameterSchema"
+        :disabled="action.pending.value"
+        @update:model-value="updateFileOptions($event)"
       />
       <details class="advanced-options">
         <summary>高级设置 · 版本与执行规则</summary>
         <div class="form-grid">
           <label>
             已发布版本
-            <select v-model="versionId" required>
+            <select
+              v-model="versionId"
+              required
+              @change="updateFileOptions({ ...fileOptions, inputs: {} })"
+            >
               <option value="" disabled>请选择程序版本</option>
               <option
                 v-for="version in versions"
@@ -1145,9 +1293,12 @@ async function deleteSchedule() {
               <option value="none" :disabled="runTask.requires_input">
                 不使用文件
               </option>
-              <option value="upload">直接拖入或选择文件</option>
+              <option value="upload">从当前浏览器所在电脑上传文件</option>
               <option value="existing">选择已有文件批次</option>
             </select>
+            <small v-if="runInputMode === 'upload'">
+              选择的文件会先上传工作台，再交给执行电脑；此按钮不会浏览远程执行电脑的磁盘。
+            </small>
           </label>
           <label v-if="runInputMode === 'existing'">
             已有输入批次
@@ -1212,7 +1363,23 @@ async function deleteSchedule() {
         <ParameterFields
           v-model="runParameters"
           :schema="runTask.parameter_schema"
+          :omit-keys="runFileKeys"
           :label="directoryTask(runTask) ? '其他业务参数' : '本次业务参数'"
+        />
+        <NodeDirectoryButton
+          v-if="directoryTask(runTask)"
+          :node="runNode"
+          :project-id="runTask.project_id"
+          :disabled="action.pending.value"
+          @select="runInputDir = $event"
+        />
+        <TaskFileFields
+          :model-value="runFileOptions"
+          :node="runNode"
+          :project-id="runTask.project_id"
+          :schema="runTask.parameter_schema"
+          :disabled="action.pending.value"
+          @update:model-value="updateFileOptions($event, true)"
         />
       </fieldset>
       <p class="muted">

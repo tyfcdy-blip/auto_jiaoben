@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { loadChoices } from '../api'
 import { useResource, formatTime } from '../composables'
@@ -59,6 +59,19 @@ const endpoint = computed(() => {
   return `/runs?${query}`
 })
 const runs = useResource<Page<Run>>(() => endpoint.value)
+const dispatchPaused = computed(() =>
+  (runs.result.value?.items || []).some(
+    (run) =>
+      run.state === 'queued' && run.waiting_reason_code === 'dispatch_paused',
+  ),
+)
+let refreshTimer: ReturnType<typeof setInterval> | undefined
+onMounted(() => {
+  refreshTimer = setInterval(() => {
+    if (!document.hidden && !runs.loading.value) void runs.refresh()
+  }, 5000)
+})
+onUnmounted(() => clearInterval(refreshTimer))
 watch(
   () => route.query,
   () => {
@@ -105,6 +118,11 @@ function clearFilters() {
     :error="runs.error.value || taskChoices.error.value"
     :loading="runs.loading.value"
   />
+  <div v-if="dispatchPaused" class="feedback warning section-gap" role="status">
+    <strong>平台派发已暂停，排队任务尚未执行。</strong>
+    请管理员先核对待执行任务，再恢复平台派发；电脑在线或空闲不会解除此暂停。
+  </div>
+  <p class="form-caption">页面可见时每 5 秒更新运行状态，无需反复点击刷新。</p>
   <section class="filter-panel" aria-label="运行记录筛选">
     <label>
       项目

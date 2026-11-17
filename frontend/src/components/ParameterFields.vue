@@ -10,6 +10,8 @@ type FieldSchema = {
   items?: { type?: string }
   minimum?: number
   maximum?: number
+  format?: string
+  'x-workbench-file'?: string
 }
 
 const props = withDefaults(
@@ -18,8 +20,9 @@ const props = withDefaults(
     schema?: Record<string, unknown> | null
     label?: string
     scheduled?: boolean
+    omitKeys?: string[]
   }>(),
-  { schema: null, label: '业务参数', scheduled: false },
+  { schema: null, label: '业务参数', scheduled: false, omitKeys: () => [] },
 )
 const emit = defineEmits<{ 'update:modelValue': [value: string] }>()
 const reserved = new Set(['input_dir', 'batch_key'])
@@ -45,6 +48,7 @@ const fields = computed(() => {
   return Object.entries(properties as Record<string, FieldSchema>)
     .filter(([key, value]) => {
       if (
+        props.omitKeys.includes(key) ||
         (usesDirectoryInput.value && reserved.has(key)) ||
         !value ||
         typeof value !== 'object'
@@ -73,7 +77,9 @@ const hasComplexFields = computed(() => {
     return false
   return (
     Object.keys(properties as Record<string, unknown>).filter(
-      (key) => !(usesDirectoryInput.value && reserved.has(key)),
+      (key) =>
+        !props.omitKeys.includes(key) &&
+        !(usesDirectoryInput.value && reserved.has(key)),
     ).length > fields.value.length
   )
 })
@@ -110,6 +116,28 @@ watch(
 function current(field: { key: string; definition: FieldSchema }) {
   const value = parsed.value?.[field.key]
   return value === undefined ? field.definition.default : value
+}
+function supportsDateMode(field: { key: string; definition: FieldSchema }) {
+  return (
+    props.scheduled &&
+    field.definition.type === 'string' &&
+    !field.definition.enum &&
+    !field.definition['x-workbench-file']
+  )
+}
+function dateMode(field: { key: string; definition: FieldSchema }) {
+  const value = current(field)
+  return value === '${scheduled_date}' || value === '${previous_month}'
+    ? value
+    : 'fixed'
+}
+function updateDateMode(
+  field: { key: string; definition: FieldSchema },
+  event: Event,
+) {
+  const value = (event.target as HTMLSelectElement).value
+  // 显式留空，避免默认日期变量在切回固定值后被默认值逻辑重新填入。
+  replace(field.key, value === 'fixed' ? '' : value)
 }
 function textValue(field: { key: string; definition: FieldSchema }) {
   const value = current(field)
@@ -168,6 +196,29 @@ function updateRaw(event: Event) {
         {{ field.definition.title || field.key }}
         <template v-if="required.has(field.key)">*</template>
         <select
+          v-if="supportsDateMode(field)"
+          :value="dateMode(field)"
+          :aria-label="`${field.definition.title || field.key}的取值方式`"
+          @change="updateDateMode(field, $event)"
+        >
+          <option value="fixed">固定值</option>
+          <option value="${scheduled_date}">计划当天（YYYY-MM-DD）</option>
+          <option
+            v-if="
+              field.definition.format !== 'date' ||
+              dateMode(field) === '${previous_month}'
+            "
+            value="${previous_month}"
+            :disabled="field.definition.format === 'date'"
+          >
+            {{
+              field.definition.format === 'date'
+                ? '上一月（旧配置，需要修改）'
+                : '上一月（YYYY-MM）'
+            }}
+          </option>
+        </select>
+        <select
           v-if="field.definition.enum || field.definition.type === 'boolean'"
           :value="textValue(field)"
           :required="required.has(field.key)"
@@ -183,7 +234,13 @@ function updateRaw(event: Event) {
               :key="index"
               :value="String(index)"
             >
-              {{ choice === null ? '空值' : choice }}
+              {{
+                choice === null
+                  ? '空值'
+                  : choice === ''
+                    ? '留空（空字符串）'
+                    : choice
+              }}
             </option>
           </template>
           <template v-else-if="field.definition.type === 'boolean'">
@@ -192,12 +249,15 @@ function updateRaw(event: Event) {
           </template>
         </select>
         <input
-          v-else
+          v-else-if="!supportsDateMode(field) || dateMode(field) === 'fixed'"
           :value="textValue(field)"
           :type="
             ['number', 'integer'].includes(field.definition.type || '')
               ? 'number'
-              : 'text'
+              : field.definition.type === 'string' &&
+                  field.definition.format === 'date'
+                ? 'date'
+                : 'text'
           "
           :step="
             field.definition.type === 'integer'
@@ -211,14 +271,20 @@ function updateRaw(event: Event) {
           :required="required.has(field.key)"
           :aria-label="field.definition.title || field.key"
           :placeholder="
-            field.definition.type === 'array'
-              ? '多个值用逗号分隔'
-              : scheduled
-                ? '可填写 ${scheduled_date}'
-                : ''
+            field.definition.type === 'array' ? '多个值用逗号分隔' : ''
           "
           @input="update(field, $event)"
         />
+        <small
+          v-else-if="
+            field.definition.format === 'date' &&
+            dateMode(field) === '${previous_month}'
+          "
+          class="feedback warning"
+        >
+          旧配置只生成月份，此参数要求完整日期，请改选固定值或计划当天。
+        </small>
+        <small v-else>按每次计划运行的日期自动填写。</small>
         <small v-if="field.definition.description">
           {{ field.definition.description }}
         </small>

@@ -1,0 +1,52 @@
+执行电脑文件任务与 v0.6.1-rc.1 升级验证记录
+
+模式：全过程开发。等级：L3（执行电脑文件访问、增量建表、生产升级）。
+基线：0753d9a8d27ab85a68b5c54af2dcb098e1df3553；既有生产应用 v0.6.0-rc.4。
+用户决策：Excel 由脚本读取，工作台选择文件并填写日期，不做平台逐行拆任务。
+服务器与电脑使用 HTTPS，不依赖共享文件夹。部署沿用 Docker 与共享 PostgreSQL。
+
+任务与验收矩阵
+NF-01 远端授权目录选择、任务参数与输出目录：现有 node_files 后端/Agent/网页实现；API、Agent、真实HTTP及浏览器联调；既有证据见 execution-usability-20261117.txt。
+NF-02 日期参数：ParameterFields.vue；固定日期日历，定时计划当天/上一月；format=date不提供上一月，旧错误月份变量保留警告。组件11项及前端全量187项通过，退出0；主线再次执行format:check及/automation/构建通过。独立复核发现的日期格式问题已关闭。
+NF-03 Excel示例：examples/excel-file-input；合成Excel、日期传递、平台产物与本机保存；示例和真实HTTP/Agent联调18项通过，退出0，无外部写入。
+NF-04 安装升级：按版本安装目录，新增保留绑定升级入口，不停止运行中脚本，更新Windows登录启动；配置、token、恢复证据保持字节不变。真实Windows CMD936中文入口与安装流程回归通过。
+UP-01 发布身份：固定镜像标签、源码提交、OCI摘要、离线包SHA256一致；拒绝脏源码、不匹配提交和错包；合法rc.4及0.6.1-rc.1归档正例均通过。正式发布镜像校验结果随交付目录的验证结果保存。
+UP-02 升级：只备份工作台单库、配置及平台卷，先停派发并排空在途任务，再显式迁移新增四表，保留旧数据与密钥，不改Nginx；真实隔离Docker/PostgreSQL核心演练通过，完整upgrade.sh也已执行通过。
+UP-03 回滚：恢复原镜像配置，保留新增表与审计，保持派发关闭，阻止新文件任务被旧应用忽略约束执行；完整rollback-upgrade.sh已执行通过。数据库备份实际恢复到隔离的另一测试库并验证旧用户证据。
+UP-04 CI：增加隔离PostgreSQL17测试服务；不把本地测试当GitHub CI。运行结果待查询。
+
+数据与环境
+仅用独立测试项目、合成文件、临时数据库schema和隔离容器；不接生产数据库，不发送真实钉钉通知。
+现有本地体验容器与用户配置保持。历史Nine脚本依赖不纳入此次修改，不声称验证真实业务。
+生产升级后仍需执行电脑新Agent、浏览器和真实业务试点验收；旧Agent保持旧任务兼容，不启用新文件能力。
+
+准入与退出
+不允许未关闭P0/P1、关键失败测试、身份不匹配的镜像进入交付。
+无可靠备份、在途运行/未知进程、迁移或健康检查失败时停止，保持派发关闭。
+不自动恢复生产数据库、不删卷、不重建账号、不重写共享Nginx。
+独立代码复核、CI、人工验证、发布执行分别记录；Codex自检不等于人工代码评审或CI通过。
+
+真实测试记录（2026-11-17）
+前端：npm test，19文件187项通过；npm run format:check；VITE_BASE_PATH=/automation/ npm run build，均退出0。
+Windows项目.venv Python3.12：EXCEL_TEST_PYTHON显式指定已安装锁定openpyxl的测试解释器；DESKTOP_JOB_PYTHON使用独立桌面依赖环境。
+全量PostgreSQL回归：设置WORKBENCH_TEST_DATABASE_FILE指向本地隔离PG17，WB_NODE_FILES_BROWSER=1；
+  .venv/Scripts/python.exe -m pytest tests -q --tb=short --junitxml=runtime/verification/node-files-final-release-postgres.xml
+  首轮493通过、1失败、27跳过，退出1。唯一失败为新增CMD用例本身的命令转义；后改为真实ASCII启动批处理调用中文入口。
+修复后回归：
+  .venv/Scripts/python.exe -m pytest tests/agent/test_windows_installer.py tests/backend/test_agent_package.py tests/deployment/test_deployment_safety.py tests/deployment/test_release_image_verification.py -q --tb=short --junitxml=runtime/verification/release-regression-fixed.xml
+  55通过、1跳过，退出0；覆盖失效用例、安装包白名单新增入口、旧/新发布包身份及异常关闭API/Worker断言。
+  跳过项为Windows本地bash入口不可用；升级脚本另在真实Linux容器执行。
+全量中的其余跳过为未启用的单独Docker演练、Windows历史symlink用例、需显式真实会话的旧live-agent/Nine业务测试；不冒充真实业务通过。
+静态：.venv/Scripts/ruff.exe check backend agent tests deploy；git diff --check，退出0。
+浏览器：真实Edge经临时合成账户运行frontend/e2e/node-files.mjs；runtime/verification/node-files-ui/result.json passed=true，9项检查；无生产凭据。
+
+已关闭缺陷：P1失败路径必须同时停止API和Worker，不能只停调度Worker；P1中文Windows升级入口先切UTF8代码页；P2日期格式限制；P2新版本打包成功正例。另修复旧安装目录会复用旧代码的问题。
+专项未验证：实际CentOS7共享Nginx、公网入口、用户执行电脑环境、真实钉钉和业务文件；最终交付后由部署现场执行，不据本地演练宣称上线。
+独立复核与最终GitHub CI结果以交付目录最终验证结果为准；人工代码评审、开发自测确认和生产发布执行尚未发生。
+
+部署演练补充：WB_UPGRADE_SHELL_TEST=1、WB_UPGRADE_DOCKER_TEST=1，执行
+  .venv/Scripts/python.exe -m pytest tests/deployment/test_upgrade_shell.py tests/deployment/test_upgrade_postgres.py -q --tb=short --junitxml=runtime/verification/upgrade-shell-postgres.xml
+2通过、0失败/跳过，退出0，68.95秒。主线读取JUnit并核对实现，确认单库备份恢复、完整Shell升级回滚及失败停止API/Worker均为真实执行。
+容量门禁测试覆盖不足、恰好足够、非法计量；实际测试曾被Docker /tmp空间不足正确拒绝，之后更换独立测试磁盘而未降低门禁。
+未逐阶段注入pg_dump/迁移/ready失败，已验证通用故障护栏；不冒充所有故障均验证。
+独立复核：upgrade_audit只读审查并独立执行55项回归及11项日期组件测试，报告范围无未关闭P0/P1；容量增量由主线复核，作者未将自测冒充独审。

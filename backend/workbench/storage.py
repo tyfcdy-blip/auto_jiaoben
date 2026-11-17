@@ -42,6 +42,8 @@ def check_schema(schema):
     except (SchemaError, ValueError, TypeError):
         raise Problem(422, "invalid_schema", "参数模式须为封闭 object，禁止外部引用") from None
     check_directory_schema(schema)
+    from .node_files import file_fields
+    file_fields(schema)
 
 
 RESERVED_PARAMETERS = {"command", "version_id", "node_id", "credential", "connection", "operation", "run_id", "attempt_id"}

@@ -5,6 +5,7 @@ import TasksView from './views/TasksView.vue'
 import RunsView from './views/RunsView.vue'
 import RunDetailView from './views/RunDetailView.vue'
 import NodesView from './views/NodesView.vue'
+import NodeDetailView from './views/NodeDetailView.vue'
 import BatchesView from './views/BatchesView.vue'
 import CallersView from './views/CallersView.vue'
 import SchedulesView from './views/SchedulesView.vue'
@@ -22,6 +23,7 @@ export const router = createRouter({
     { path: '/runs', component: RunsView },
     { path: '/runs/:id', component: RunDetailView },
     { path: '/nodes', component: NodesView },
+    { path: '/nodes/:id', component: NodeDetailView },
     { path: '/batches', component: BatchesView },
     { path: '/callers', component: CallersView },
     { path: '/schedules', component: SchedulesView },

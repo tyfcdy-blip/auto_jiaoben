@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { onMounted, onUnmounted, ref, watch } from 'vue'
 import { session, canManage } from '../session'
 import { request } from '../api'
 import { useAction, useList, formatTime } from '../composables'
@@ -17,6 +17,14 @@ const nodes = useList<Node>('/nodes', true),
   registering = ref(false),
   selected = ref<Node | null>(null),
   maintaining = ref(false)
+let refreshTimer: ReturnType<typeof setInterval> | undefined
+onMounted(() => {
+  refreshTimer = setInterval(() => {
+    if (!document.hidden && !nodes.loading.value && !action.pending.value)
+      void nodes.refresh()
+  }, 5000)
+})
+onUnmounted(() => clearInterval(refreshTimer))
 function close() {
   open.value = false
   registering.value = false
@@ -83,6 +91,13 @@ async function patch(
     :success="action.success.value"
     :loading="nodes.loading.value"
   />
+  <div class="overview-note">
+    <span class="note-marker">i</span>
+    <p>
+      在线表示电脑已启用且最近收到心跳；空闲表示还有运行名额，不代表任务已经启动。
+      平台派发暂停、维护或配置未同步时仍不能接单。页面可见时每 5 秒自动更新。
+    </p>
+  </div>
   <section class="panel">
     <div v-if="nodes.result.value?.items.length" class="table-scroll">
       <table>
@@ -98,7 +113,9 @@ async function patch(
         <tbody>
           <tr v-for="node in nodes.result.value.items" :key="node.id">
             <td class="strong">
-              {{ node.name }}
+              <RouterLink class="text-link" :to="`/nodes/${node.id}`">
+                {{ node.name }}
+              </RouterLink>
               <details>
                 <summary>技术详情</summary>
                 <small class="subline mono">标识：{{ node.id }}</small>

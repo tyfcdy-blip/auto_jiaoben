@@ -12,6 +12,7 @@ from agent.config import AgentError, Config
 from agent.connection import import_connection
 import agent.directory_input as directory_input
 from agent.directory_input import CAPABILITY, checked_directory, directory_manifest
+from agent.filesystem_guard import GuardedDirectory
 
 
 spec = importlib.util.spec_from_file_location("directory_agent_support", Path(__file__).with_name("test_agent.py"))
@@ -208,12 +209,13 @@ def test_directory_access_failure_reports_existing_completion(agent_factory, inp
     root, folder = input_folder
     agent, control = agent_factory(input_roots=[str(root)])
     assign_directory(control, folder)
-    original = os.scandir
-    def denied(path):
-        if Path(path) == folder:
+    original = GuardedDirectory.scan
+    def denied(guard):
+        # POSIX使用目录描述符，故障在同一访问边界注入，两个平台都验证拒绝读取。
+        if guard.path == folder:
             raise PermissionError("synthetic permission failure")
-        return original(path)
-    monkeypatch.setattr(os, "scandir", denied)
+        return original(guard)
+    monkeypatch.setattr(GuardedDirectory, "scan", denied)
     agent.run_once()
     assert control.completions[-1]["observation"] == "startup_failed"
 

@@ -17,6 +17,8 @@ from jsonschema import Draft202012Validator
 from . import __version__
 from .config import AgentError, Config
 from .directory_input import CAPABILITY, directory_manifest
+from .node_files import CAPABILITY as FILE_CAPABILITY, authorized_path, selected_manifest
+from .node_file_service import NodeFileService
 from .process import ProcessTree
 from .storage import StateLock, atomic_json, extract_bundle, safe_name
 
@@ -57,12 +59,15 @@ class Agent:
         self.config_revision, self.config_hash = config.config_revision, config.config_hash
         self.root_status = {root: {"path": root, "status": "unknown", "checked_at": None}
                             for root in self.input_roots}
+        self.file_service = NodeFileService(self, transport) if self.config_path else None
         if self.config_path:
-            advertised = [value for value in config.capabilities if value not in {CAPABILITY, CONFIG_CAPABILITY}]
-            if len(advertised) + 1 + (1 if self.input_roots else 0) > 30:
+            advertised = [value for value in config.capabilities if value not in {CAPABILITY, CONFIG_CAPABILITY, FILE_CAPABILITY}]
+            if len(advertised) + 2 + (1 if self.input_roots else 0) > 30:
                 raise AgentError("配置同步和目录输入能力计入最多30项心跳能力")
 
     def close(self) -> None:
+        if self.file_service:
+            self.file_service.close()
         self.client.close()
 
     def _post(self, path: str, payload: dict) -> httpx.Response:
@@ -83,9 +88,10 @@ class Agent:
         return hashlib.sha256(encoded).hexdigest()
 
     def _capabilities(self) -> list[str]:
-        values = [value for value in self.config.capabilities if value not in {CAPABILITY, CONFIG_CAPABILITY}]
+        values = [value for value in self.config.capabilities if value not in {CAPABILITY, CONFIG_CAPABILITY, FILE_CAPABILITY}]
         if self.config_path:
             values.append(CONFIG_CAPABILITY)
+            values.append(FILE_CAPABILITY)
         if self.input_roots:
             values.append(CAPABILITY)
         return values
@@ -205,6 +211,8 @@ class Agent:
                 "observation": observation, "artifact_state": artifacts}
 
     def _deliver(self, directory: Path, state: dict) -> None:
+        if self.file_service:
+            self.file_service.deliver(directory, state)
         try:
             self._upload_logs(directory, state)
         except httpx.HTTPError:
@@ -258,6 +266,11 @@ class Agent:
             self.recover()
             if not self.sync_configuration():
                 return False
+            if self.file_service:
+                if not self.file_service.sync():
+                    return False
+                self.file_service.start()
+                self.file_service.retry_once()
             response = self._post("/api/v1/agent/claim", {})
             if response.status_code == 204:
                 return False
@@ -282,6 +295,8 @@ class Agent:
         directory.mkdir()
         state = {"run_id": claim["run_id"], "attempt_id": claim["attempt_id"], "phase": "preparing",
                  "sequence": 0, "ack_sequence": 0, "log_bytes": 0, "delivered": False}
+        if claim.get("node_files"):
+            state["node_files"] = claim["node_files"]
         self._save(directory, state)
         try:
             if claim["side_effects"]:
@@ -296,6 +311,8 @@ class Agent:
             state["completion"] = self._completion(claim, observation, error=f"{type(error).__name__}: {error}")
         state["phase"] = "terminal"
         self._save(directory, state)
+        if claim.get("node_files", {}).get("output_dir") and self.file_service:
+            self.file_service.save(directory, state, claim["node_files"])
         self._deliver(directory, state)
 
     def run_directory(self, claim: dict) -> Path:
@@ -315,6 +332,24 @@ class Agent:
         if not entry_path.is_file():
             raise AgentError("程序入口不存在")
         manifest = []
+        options = claim.get("node_files")
+        if options:
+            if not self.file_service:
+                raise AgentError("执行器尚未启用受管文件能力")
+            self.file_service.verify_options(options)
+            if options.get("output_dir"):
+                authorized_path(options["output_dir"], self.file_service.roots,
+                                options["allowed_output_roots"], directory=True)
+            def file_progress() -> None:
+                try:
+                    self.heartbeat()
+                except httpx.HTTPError:
+                    pass
+                if claim["run_id"] in self.cancel_ids:
+                    raise AgentError("准备本机输入期间收到停止请求")
+            manifest = selected_manifest(options["inputs"], claim["parameters"], self.input_roots,
+                                         options["allowed_input_roots"], self.config.max_expanded_bytes, file_progress,
+                                         options["input_kinds"])
         if "input_directory" in claim:
             if claim["input_files"] or claim["parameters"].get("input_dir") != claim["input_directory"]:
                 raise AgentError("目录输入参数与领取清单不一致，或同时指定平台输入文件")
@@ -329,15 +364,21 @@ class Agent:
             if project_roots is not None and claim.get("config_revision") != self.config_revision:
                 raise AgentError("任务要求的电脑配置修订与本机不一致")
             try:
-                manifest = directory_manifest(claim["input_directory"], self.input_roots,
+                directory_rows = directory_manifest(claim["input_directory"], self.input_roots,
                                               self.config.max_expanded_bytes, progress,
                                               project_roots=project_roots)
+                existing_paths = {row["path"] for row in manifest}
+                manifest.extend(row for row in directory_rows if row["path"] not in existing_paths)
             except (AgentError, OSError):
                 self._mark_root_status(claim["input_directory"], "unavailable")
                 raise
             self._mark_root_status(claim["input_directory"], "available")
-        names: set[str] = set()
-        input_bytes = 0
+        names = {row["name"].casefold() for row in manifest}
+        if len(names) != len(manifest):
+            raise AgentError("本机输入清单名称冲突")
+        input_bytes = sum(Path(row["path"]).stat().st_size for row in manifest)
+        if len(manifest) > 1000 or input_bytes > self.config.max_expanded_bytes:
+            raise AgentError("输入清单总容量或数量超过上限")
         for input_file in claim["input_files"]:
             name = safe_name(input_file["name"])
             if name.casefold() in names:
@@ -349,6 +390,8 @@ class Agent:
             if input_bytes > self.config.max_expanded_bytes:
                 raise AgentError("输入批次总容量超过上限")
             manifest.append({"name": name, "path": str(path), "sha256": input_file["sha256"]})
+            if len(manifest) > 1000:
+                raise AgentError("输入清单总数量超过上限")
         context = {"protocol_version": "1", "run_id": claim["run_id"], "attempt_id": claim["attempt_id"],
                    "operation": claim["operation"], "parameters": claim["parameters"], "input_manifest": manifest,
                    "output_dir": str(directory / "output"), "state_dir": str(directory / "business-state"),

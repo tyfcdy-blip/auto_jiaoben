@@ -1,5 +1,6 @@
 from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
+from .node_file_schemas import FileOptions
 
 
 class Strict(BaseModel):
@@ -48,6 +49,7 @@ class VersionCreate(Name):
 
 
 class TaskCreate(ProjectName):
+    file_options: FileOptions | None = None
     version_id: str
     default_parameters: dict = Field(default_factory=dict)
     node_id: str | None = None
@@ -59,6 +61,7 @@ class TaskCreate(ProjectName):
 
 
 class TaskUpdate(Name):
+    file_options: FileOptions | None = None
     base_config_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
     version_id: str
     default_parameters: dict = Field(default_factory=dict)
@@ -133,6 +136,7 @@ class CallerCreate(ProjectName):
 
 
 class RunCreate(Strict):
+    file_options: FileOptions | None = None
     event_id: str = Field(min_length=1, max_length=180)
     input_batch_id: str | None = None
     parameters: dict = Field(default_factory=dict)

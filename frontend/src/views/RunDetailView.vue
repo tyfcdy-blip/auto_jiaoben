@@ -50,6 +50,25 @@ const active = computed(
       'cancel_requested',
     ].includes(run.result.value.state),
 )
+const queueExpiredWithoutStart = computed(() => {
+  const current = run.result.value
+  return (
+    current?.state === 'failed' &&
+    current.error === '排队超时，未启动程序' &&
+    !current.started_at &&
+    !current.attempt_id
+  )
+})
+const notStarted = computed(() => {
+  const current = run.result.value
+  return Boolean(
+    current &&
+    !current.started_at &&
+    !current.attempt_id &&
+    (['queued', 'waiting_input'].includes(current.state) ||
+      queueExpiredWithoutStart.value),
+  )
+})
 let timer: ReturnType<typeof setInterval> | undefined
 async function refresh() {
   await Promise.all([run.refresh(), logs.refresh()])
@@ -58,14 +77,22 @@ onMounted(() => {
   timer = setInterval(() => {
     if (
       !document.hidden &&
-      active.value &&
+      (active.value ||
+        run.result.value?.file_status?.save_state === 'pending') &&
       !run.loading.value &&
+      !logs.loading.value &&
       !action.pending.value
     )
       void refresh()
   }, 5000)
 })
 onUnmounted(() => clearInterval(timer))
+async function retrySave() {
+  await action.perform(async () => {
+    await request(`/runs/${runId.value}/file-save/retry`, { method: 'POST' })
+    await run.refresh()
+  }, '已请求重新保存结果文件，不会重新运行脚本。')
+}
 async function cancel() {
   await action.perform(async () => {
     await request(`/runs/${runId.value}/cancel`, { method: 'POST' })
@@ -132,6 +159,15 @@ async function download(artifact: { id: string; name: string }) {
     :loading="run.loading.value && !run.result.value"
   />
   <template v-if="run.result.value">
+    <div
+      v-if="queueExpiredWithoutStart"
+      class="feedback warning section-gap"
+      role="status"
+    >
+      <strong>本次任务没有在执行电脑上运行。</strong>
+      等待派发超时后已结束，这不是脚本执行报错。请先处理派发或电脑接单条件，
+      再从任务管理发起新的运行；此历史记录不会自动恢复。
+    </div>
     <section class="panel">
       <dl class="details-grid">
         <div>
@@ -191,6 +227,72 @@ async function download(artifact: { id: string; name: string }) {
     <div v-if="run.result.value.error" class="section-gap">
       <Feedback :error="run.result.value.error" />
     </div>
+    <section
+      v-if="run.result.value.file_status?.enabled"
+      class="panel content-padding section-gap"
+      aria-label="结果交付状态"
+    >
+      <h2>结果保存到执行电脑</h2>
+      <p>
+        程序执行、平台归档和本机另存分别记录。另存失败不代表脚本需要重新运行。
+      </p>
+      <p v-if="run.result.value.file_status.save_state === 'not_requested'">
+        本次未要求另存到执行电脑。
+      </p>
+      <p
+        v-else-if="run.result.value.file_status.save_state === 'pending'"
+        role="status"
+      >
+        {{
+          notStarted
+            ? '等待程序启动并生成结果文件。'
+            : '等待执行电脑回报结果保存状态。'
+        }}
+      </p>
+      <p
+        v-else-if="run.result.value.file_status.save_state === 'succeeded'"
+        role="status"
+      >
+        已保存到执行电脑，文件清单见下方。
+      </p>
+      <Feedback
+        v-else
+        :error="
+          run.result.value.file_status.save_error ||
+          '结果另存失败，请检查电脑目录权限和磁盘空间。'
+        "
+      />
+      <p v-if="run.result.value.file_status.output_dir" class="mono">
+        保存父目录：{{ run.result.value.file_status.output_dir }}
+      </p>
+      <ul v-if="run.result.value.file_status.saved_files.length">
+        <li
+          v-for="file in run.result.value.file_status.saved_files"
+          :key="file.path"
+        >
+          {{ file.name }} · {{ file.path }}
+        </li>
+      </ul>
+      <button
+        v-if="
+          run.result.value.file_status.save_state === 'failed' &&
+          canOperateRun &&
+          run.result.value.attempt_id &&
+          !active
+        "
+        class="button small"
+        :disabled="action.pending.value"
+        @click="retrySave"
+      >
+        仅重试另存结果
+      </button>
+      <p class="muted">
+        钉钉发送状态请在消息记录中核对；文件保存成功不代表消息已送达。
+      </p>
+      <RouterLink class="text-link" to="/notification-records">
+        查看消息记录 →
+      </RouterLink>
+    </section>
     <div
       v-if="
         run.result.value.state === 'queued' && run.result.value.waiting_reason
@@ -295,6 +397,15 @@ async function download(artifact: { id: string; name: string }) {
             </tbody>
           </table>
         </div>
+        <p v-else class="form-caption">
+          {{
+            notStarted
+              ? '程序尚未启动，没有生成结果文件。'
+              : active
+                ? '尚无可下载文件，请等待执行电脑生成并回传结果。'
+                : '本次运行没有已归档的可下载文件，请结合归档状态、业务结果和日志核对。'
+          }}
+        </p>
       </div>
     </section>
     <p v-if="active" class="form-caption section-gap">

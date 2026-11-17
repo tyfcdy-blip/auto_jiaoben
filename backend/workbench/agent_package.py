@@ -7,7 +7,7 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parents[2]
 TEMPLATE = ROOT / "deploy" / "windows-agent"
-TEMPLATE_FILES = ("installer.py", "requirements-agent.txt", "使用说明.txt", "安装并连接.cmd")
+TEMPLATE_FILES = ("installer.py", "requirements-agent.txt", "使用说明.txt", "安装并连接.cmd", "升级已绑定电脑.cmd")
 
 
 def _write(archive: zipfile.ZipFile, name: str, content: bytes) -> None:

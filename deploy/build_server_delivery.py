@@ -13,6 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SERVER_FILES = (
     "common.sh", "preflight.sh", "install.sh", "verify.sh", "enable-dispatch.sh",
     "rollback-first-install.sh", "patch_nginx.py", "nginx-location.conf", "README-FIRST.txt",
+    "upgrade.sh", "rollback-upgrade.sh", "upgrade-common.sh", "README-UPGRADE.txt",
 )
 PAYLOAD_FILES = (
     "compose.yaml", "compose.external-db.yaml", "compose.shared-nginx.yaml",
@@ -113,6 +114,33 @@ def docker_archive_config_digest(image_archive: Path) -> str:
     return docker_archive_identity(image_archive)["image_config_digest"]
 
 
+def release_revision() -> str:
+    """发布只能取自已提交的干净源码，防止镜像和交付脚本各用一份版本。"""
+    status = subprocess.run(
+        ["git", "status", "--porcelain", "--untracked-files=normal"], cwd=ROOT,
+        check=True, capture_output=True, text=True, timeout=10,
+    ).stdout
+    if status.strip():
+        raise ValueError("发布工作区存在未提交修改")
+    return subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=ROOT, check=True, capture_output=True,
+        text=True, timeout=10,
+    ).stdout.strip()
+
+
+def verify_archive_labels(image_archive: Path, image: str, version: str, commit: str) -> None:
+    """归档本身必须携带相同平台及源码标签，不能只相信旁边的JSON清单。"""
+    with tarfile.open(image_archive, "r") as archive:
+        manifest = _read_json_member(archive, "manifest.json")[0]
+        config = _read_json_member(archive, manifest["Config"])
+    labels = config.get("config", {}).get("Labels", {})
+    if (config.get("os") != "linux" or config.get("architecture") != "amd64"
+            or labels.get("org.opencontainers.image.version") != version
+            or labels.get("org.opencontainers.image.revision") != commit
+            or manifest.get("RepoTags") != [image]):
+        raise ValueError("归档平台、标签或源码提交与发布清单不一致")
+
+
 def build(image_archive: Path, manifest_path: Path, output: Path) -> dict:
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     required = {"release", "git_commit", "image", "image_id", "image_index_digest",
@@ -125,16 +153,15 @@ def build(image_archive: Path, manifest_path: Path, output: Path) -> dict:
             or manifest["image_id"] != manifest["image_config_digest"]):
         raise ValueError("镜像发布清单不完整或归档摘要不一致")
     version = str(manifest["release"]).removeprefix("v")
-    if version != "0.6.0-rc.4" or manifest["git_commit"] != (
-            "825e310fd567023542140471e31a147bd0f45b1d"):
-        raise ValueError("服务器包只允许当前已验证的rc.4基线")
+    if (not re.fullmatch(r"\d+\.\d+\.\d+(?:-rc\.\d+)?", version)
+            or not re.fullmatch(r"[a-f0-9]{40}", str(manifest["git_commit"]))
+            or manifest["image"] != f"automation-workbench:{version}"):
+        raise ValueError("发布版本、提交或镜像标签无效")
     root_name = f"automation-workbench-server-v{version}"
-    delivery_commit = subprocess.run(
-        ["git", "rev-parse", "HEAD"], cwd=ROOT, check=True, capture_output=True,
-        text=True, timeout=10,
-    ).stdout.strip()
-    if not re.fullmatch(r"[a-f0-9]{40}", delivery_commit):
-        raise ValueError("无法确认部署脚本Git提交")
+    delivery_commit = release_revision()
+    if delivery_commit != manifest["git_commit"]:
+        raise ValueError("镜像提交与交付脚本Git提交不一致")
+    verify_archive_labels(image_archive, manifest["image"], version, delivery_commit)
     output.parent.mkdir(parents=True, exist_ok=True)
     if output.exists() or Path(str(output) + ".sha256").exists():
         raise ValueError("输出文件已存在，拒绝覆盖")
@@ -148,20 +175,28 @@ def build(image_archive: Path, manifest_path: Path, output: Path) -> dict:
             source = ROOT / "deploy" / "server" / name
             if not source.is_file() or source.is_symlink():
                 raise ValueError(f"交付文件缺失：{name}")
-            shutil.copy2(source, scripts / name)
+            content = source.read_text(encoding="utf-8")
+            if name == "README-FIRST.txt":
+                content = content.replace("0.6.0-rc.4", version)
+            (scripts / name).write_text(content, encoding="utf-8", newline="\n")
         common_path = scripts / "common.sh"
         common = common_path.read_text(encoding="utf-8")
         if common.count("REPLACE_WITH_IMAGE_CONFIG_DIGEST") != 1:
             raise ValueError("服务器脚本缺少唯一的镜像config摘要占位")
-        common_path.write_text(
-            common.replace("REPLACE_WITH_IMAGE_CONFIG_DIGEST",
-                           manifest["image_config_digest"]),
-            encoding="utf-8", newline="\n",
-        )
+        common = common.replace("REPLACE_WITH_IMAGE_CONFIG_DIGEST", manifest["image_config_digest"])
+        for key, value in {"RELEASE_VERSION": version, "RELEASE_COMMIT": delivery_commit,
+                           "RELEASE_IMAGE": manifest["image"]}.items():
+            common, count = re.subn(rf'^readonly {key}="[^"\n]*"$',
+                                   f'readonly {key}="{value}"', common, flags=re.MULTILINE)
+            if count != 1:
+                raise ValueError(f"发布模板缺少唯一{key}")
+        common_path.write_text(common, encoding="utf-8", newline="\n")
         for name in PAYLOAD_FILES:
             shutil.copy2(ROOT / "deploy" / name, payload / name)
         environment = (ROOT / "deploy" / ".env.production.example").read_text(encoding="utf-8")
         environment = environment.replace("REPLACE_WITH_FULL_GIT_COMMIT", manifest["git_commit"])
+        for key, value in {"WB_IMAGE": manifest["image"], "WB_RELEASE_VERSION": version}.items():
+            environment = re.sub(rf'^{key}=.*$', f'{key}={value}', environment, flags=re.MULTILINE)
         if "REPLACE_WITH" in environment:
             raise ValueError("生产环境模板仍有未填写占位")
         (payload / ".env.production").write_text(environment, encoding="utf-8", newline="\n")
