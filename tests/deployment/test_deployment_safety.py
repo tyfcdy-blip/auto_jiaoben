@@ -176,13 +176,63 @@ def test_retention_and_capacity_are_wired_to_compose_and_production_template(ren
 
 def test_finalshell_delivery_builder_is_reproducible_and_contains_no_secrets(tmp_path):
     image = tmp_path / "image.tar"
-    image.write_bytes(b"synthetic immutable image archive")
+    config = b'{"architecture":"amd64","os":"linux"}'
+    config_digest = delivery_builder.hashlib.sha256(config).hexdigest()
+    platform_manifest = json.dumps({
+        "schemaVersion": 2,
+        "mediaType": "application/vnd.oci.image.manifest.v1+json",
+        "config": {
+            "mediaType": "application/vnd.oci.image.config.v1+json",
+            "digest": f"sha256:{config_digest}",
+            "size": len(config),
+        },
+        "layers": [],
+    }, separators=(",", ":")).encode()
+    platform_manifest_digest = delivery_builder.hashlib.sha256(platform_manifest).hexdigest()
+    image_index = json.dumps({
+        "schemaVersion": 2,
+        "mediaType": "application/vnd.oci.image.index.v1+json",
+        "manifests": [{
+            "mediaType": "application/vnd.oci.image.manifest.v1+json",
+            "digest": f"sha256:{platform_manifest_digest}",
+            "size": len(platform_manifest),
+            "platform": {"architecture": "amd64", "os": "linux"},
+        }],
+    }, separators=(",", ":")).encode()
+    image_index_digest = delivery_builder.hashlib.sha256(image_index).hexdigest()
+    root_index = json.dumps({
+        "schemaVersion": 2,
+        "mediaType": "application/vnd.oci.image.index.v1+json",
+        "manifests": [{
+            "mediaType": "application/vnd.oci.image.index.v1+json",
+            "digest": f"sha256:{image_index_digest}",
+            "size": len(image_index),
+        }],
+    }, separators=(",", ":")).encode()
+    docker_manifest = json.dumps([{
+        "Config": f"blobs/sha256/{config_digest}",
+        "RepoTags": ["automation-workbench:0.6.0-rc.4"],
+        "Layers": [],
+    }]).encode()
+    with tarfile.open(image, "w") as archive:
+        for name, content in (
+                ("manifest.json", docker_manifest),
+                ("index.json", root_index),
+                (f"blobs/sha256/{image_index_digest}", image_index),
+                (f"blobs/sha256/{platform_manifest_digest}", platform_manifest),
+                (f"blobs/sha256/{config_digest}", config)):
+            entry = tarfile.TarInfo(name)
+            entry.size = len(content)
+            archive.addfile(entry, io.BytesIO(content))
     manifest = tmp_path / "release.json"
     manifest.write_text(json.dumps({
         "release": "v0.6.0-rc.4",
         "git_commit": "825e310fd567023542140471e31a147bd0f45b1d",
         "image": "automation-workbench:0.6.0-rc.4",
-        "image_id": "sha256:" + "1" * 64,
+        "image_id": f"sha256:{config_digest}",
+        "image_index_digest": f"sha256:{image_index_digest}",
+        "image_manifest_digest": f"sha256:{platform_manifest_digest}",
+        "image_config_digest": f"sha256:{config_digest}",
         "platform": "linux/amd64",
         "archive_sha256": delivery_builder.digest(image),
     }), encoding="utf-8")
@@ -203,12 +253,41 @@ def test_finalshell_delivery_builder_is_reproducible_and_contains_no_secrets(tmp
         assert any(name.endswith("/scripts/install.sh") for name in names)
         assert any(name.endswith("/payload/.env.production") for name in names)
         assert not any("secret" in Path(name).name.lower() for name in names)
+        common_name = next(name for name in names if name.endswith("/scripts/common.sh"))
+        common = archive.extractfile(common_name).read().decode()
+        assert f'RELEASE_IMAGE_CONFIG_DIGEST="sha256:{config_digest}"' in common
+        assert "REPLACE_WITH_IMAGE_CONFIG_DIGEST" not in common
         environment_name = next(name for name in names if name.endswith("/payload/.env.production"))
         environment = archive.extractfile(environment_name).read().decode()
         assert "825e310fd567023542140471e31a147bd0f45b1d" in environment
         assert "REPLACE_WITH" not in environment
     with pytest.raises(ValueError, match="拒绝覆盖"):
         delivery_builder.build(image, manifest, output)
+    valid_manifest = json.loads(manifest.read_text(encoding="utf-8"))
+
+    mismatched_identity = dict(valid_manifest)
+    mismatched_identity["image_id"] = "sha256:" + "0" * 64
+    manifest.write_text(json.dumps(mismatched_identity), encoding="utf-8")
+    with pytest.raises(ValueError, match="发布清单不完整"):
+        delivery_builder.build(image, manifest, tmp_path / "mismatched-id.tar.gz")
+
+    mismatched_semantics = dict(valid_manifest)
+    mismatched_semantics["image_manifest_digest"] = mismatched_semantics["image_index_digest"]
+    manifest.write_text(json.dumps(mismatched_semantics), encoding="utf-8")
+    with pytest.raises(ValueError, match="归档摘要不一致"):
+        delivery_builder.build(image, manifest, tmp_path / "mismatched-semantics.tar.gz")
+
+    corrupt_image = tmp_path / "corrupt-image.tar"
+    with tarfile.open(image, "r") as source, tarfile.open(corrupt_image, "w") as target:
+        for member in source.getmembers():
+            stream = source.extractfile(member) if member.isfile() else None
+            content = stream.read() if stream else None
+            if member.name == f"blobs/sha256/{config_digest}":
+                content = b'{"architecture":"arm64","os":"linux"}'
+                member.size = len(content)
+            target.addfile(member, io.BytesIO(content) if content is not None else None)
+    with pytest.raises(ValueError, match="摘要不一致"):
+        delivery_builder.docker_archive_identity(corrupt_image)
 
 
 def test_nginx_patcher_targets_only_https_server_and_is_idempotent(tmp_path):

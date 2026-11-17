@@ -22,13 +22,13 @@ install -d -m 0755 "${DATA_DIR}" "${DATA_DIR}/releases"
 
 archive="${PAYLOAD_DIR}/automation-workbench_${RELEASE_VERSION}_linux-amd64.tar"
 docker load --input "${archive}" >/dev/null
-image_id="$(docker image inspect "${RELEASE_IMAGE}" -f '{{.Id}}')"
+image_config_digest="$(docker image inspect "${RELEASE_IMAGE}" -f '{{.Id}}')"
 image_arch="$(docker image inspect "${RELEASE_IMAGE}" -f '{{.Architecture}}')"
 image_version="$(docker image inspect "${RELEASE_IMAGE}" -f '{{index .Config.Labels "org.opencontainers.image.version"}}')"
 image_revision="$(docker image inspect "${RELEASE_IMAGE}" -f '{{index .Config.Labels "org.opencontainers.image.revision"}}')"
-[[ "${image_id}" == "${RELEASE_IMAGE_ID}" && "${image_arch}" == "amd64" \
+[[ "${image_config_digest}" == "${RELEASE_IMAGE_CONFIG_DIGEST}" && "${image_arch}" == "amd64" \
    && "${image_version}" == "${RELEASE_VERSION}" && "${image_revision}" == "${RELEASE_COMMIT}" ]] \
-  || die "镜像身份、架构或OCI标签与交付清单不一致"
+  || die "镜像config摘要、架构或OCI标签与交付清单不一致"
 install -m 0644 "${archive}" "${DATA_DIR}/releases/$(basename "${archive}")"
 
 for name in compose.yaml compose.external-db.yaml compose.shared-nginx.yaml; do

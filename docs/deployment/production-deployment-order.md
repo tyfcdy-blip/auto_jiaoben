@@ -10,8 +10,8 @@
 | --- | --- | --- |
 | Git tag | `v0.6.0-rc.4`；旧rc保留但禁止用于本次部署 | rc.4 annotated tag已核对 |
 | 完整 commit SHA | `825e310fd567023542140471e31a147bd0f45b1d` | tag解引用一致 |
-| 应用镜像 | ID `sha256:1edf2393…75e11`；`linux/amd64`；71,988,301字节 | OCI revision及`/automation/assets/*`核对通过 |
-| 离线包 | 72,012,288字节；SHA-256 `c7a24782…e12f6` | docker load后镜像ID不变 |
+| 应用镜像 | OCI index `sha256:1edf2393…75e11`；`linux/amd64` manifest `sha256:d869807f…c256`；可移植config/Image ID `sha256:fa9e07cc…8693`；71,988,301字节 | index→manifest→config链路、OCI revision及`/automation/assets/*`核对通过；经典Docker加载后按config digest验收 |
+| 离线包 | 72,012,288字节；SHA-256 `c7a24782…e12f6` | 归档内容不变；经典Docker加载后config/Image ID为`sha256:fa9e07cc…8693` |
 | 基础镜像摘要 | Node `43ac6c60…772c`；Python `392307d2…564e`；生产不启动PostgreSQL镜像 | 漏洞扫描仍待完成 |
 | 部署日期与窗口 | 待填写 | 待填写 |
 | 发布负责人/回退负责人 | 待填写 | 待填写 |

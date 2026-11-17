@@ -5,7 +5,7 @@ set -Eeuo pipefail
 readonly RELEASE_VERSION="0.6.0-rc.4"
 readonly RELEASE_COMMIT="825e310fd567023542140471e31a147bd0f45b1d"
 readonly RELEASE_IMAGE="automation-workbench:0.6.0-rc.4"
-readonly RELEASE_IMAGE_ID="sha256:1edf239318674a01a4f38363e09211de06f2048b8e05c4ca560bb719f3875e11"
+readonly RELEASE_IMAGE_CONFIG_DIGEST="REPLACE_WITH_IMAGE_CONFIG_DIGEST"
 readonly COMPOSE_PROJECT="automation-workbench-production"
 readonly APP_DIR="/mnt/docker/automation-workbench"
 readonly DATA_DIR="/data/automation-workbench"

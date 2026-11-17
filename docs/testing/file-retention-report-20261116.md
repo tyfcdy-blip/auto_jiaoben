@@ -24,7 +24,7 @@
 - 前端：17个测试文件、154个用例通过；Prettier通过；`/automation/`生产构建100模块成功，退出0。
 - Ruff覆盖`backend agent tests deploy`通过；Compose解析通过；生产模板的45天、容量和项目配额由自动化断言核对。
 - 三轮独立只读复核完成；最终未发现P0/P1，代码层P2均已关闭。
-- rc.4发布基线：tag `v0.6.0-rc.4`指向`825e310fd567023542140471e31a147bd0f45b1d`；`linux/amd64`镜像ID `sha256:1edf2393…75e11`；离线包72,012,288字节，SHA-256 `c7a24782…e12f6`，`docker load`后ID不变。
+- rc.4发布基线：tag `v0.6.0-rc.4`指向`825e310fd567023542140471e31a147bd0f45b1d`；OCI index为`sha256:1edf2393…75e11`，`linux/amd64` manifest为`sha256:d869807f…c256`，归档config及经典Docker Image ID为`sha256:fa9e07cc…8693`；离线包72,012,288字节，SHA-256 `c7a24782…e12f6`。Docker Desktop/containerd与经典Docker展示的摘要语义不同，跨环境以归档config digest验收。
 - rc.4容器冒烟：独立SQLite卷完成初始化；API ready、`/automation/`首页、带前缀JS资源均200，根路径404；Worker四类水位和存储健康为healthy；临时容器和卷已删除。
 
 ## 残余风险与发布门禁
