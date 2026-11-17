@@ -189,7 +189,10 @@ def test_finalshell_delivery_builder_is_reproducible_and_contains_no_secrets(tmp
     output = tmp_path / "delivery.tar.gz"
     result = delivery_builder.build(image, manifest, output)
     assert result["sha256"] == delivery_builder.digest(output)
-    assert Path(str(output) + ".sha256").read_text().startswith(result["sha256"])
+    checksum_path = Path(str(output) + ".sha256")
+    assert checksum_path.read_text().startswith(result["sha256"])
+    assert checksum_path.read_bytes().endswith(b"\n")
+    assert b"\r" not in checksum_path.read_bytes()
     with tarfile.open(output, "r:gz") as archive:
         names = archive.getnames()
         assert all(not name.startswith("/") and ".." not in Path(name).parts for name in names)

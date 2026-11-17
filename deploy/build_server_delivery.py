@@ -92,7 +92,7 @@ def build(image_archive: Path, manifest_path: Path, output: Path) -> dict:
                     archive.addfile(info)
     package_hash = digest(output)
     Path(str(output) + ".sha256").write_text(
-        f"{package_hash}  {output.name}\n", encoding="utf-8",
+        f"{package_hash}  {output.name}\n", encoding="utf-8", newline="\n",
     )
     return {"package": str(output), "size": output.stat().st_size, "sha256": package_hash,
             "release": manifest["release"], "git_commit": manifest["git_commit"],
