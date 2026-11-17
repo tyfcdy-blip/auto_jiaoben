@@ -196,6 +196,10 @@ def test_finalshell_delivery_builder_is_reproducible_and_contains_no_secrets(tmp
     with tarfile.open(output, "r:gz") as archive:
         names = archive.getnames()
         assert all(not name.startswith("/") and ".." not in Path(name).parts for name in names)
+        sums_name = next(name for name in names if name.endswith("/SHA256SUMS"))
+        sums_content = archive.extractfile(sums_name).read()
+        assert sums_content.endswith(b"\n")
+        assert b"\r" not in sums_content
         assert any(name.endswith("/scripts/install.sh") for name in names)
         assert any(name.endswith("/payload/.env.production") for name in names)
         assert not any("secret" in Path(name).name.lower() for name in names)

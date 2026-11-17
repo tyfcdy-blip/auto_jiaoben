@@ -79,7 +79,9 @@ def build(image_archive: Path, manifest_path: Path, output: Path) -> dict:
         for path in sorted(staging.rglob("*")):
             if path.is_file() and path.name != "SHA256SUMS":
                 sums.append(f"{digest(path)}  {path.relative_to(staging).as_posix()}")
-        (staging / "SHA256SUMS").write_text("\n".join(sums) + "\n", encoding="utf-8")
+        (staging / "SHA256SUMS").write_text(
+            "\n".join(sums) + "\n", encoding="utf-8", newline="\n",
+        )
         with tarfile.open(output, "w:gz", compresslevel=6) as archive:
             for path in [staging, *sorted(staging.rglob("*"))]:
                 info = archive.gettarinfo(str(path), arcname=str(path.relative_to(staging.parent)))
